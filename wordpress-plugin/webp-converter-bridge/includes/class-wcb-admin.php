@@ -52,11 +52,11 @@ class WebP_Converter_Bridge_Admin
         
         add_submenu_page(
             'webp-converter-bridge',
-            __('Logs y Estadísticas', 'webp-converter-bridge'),
-            __('📊 Logs', 'webp-converter-bridge'),
+            __('Reportes y Estadísticas', 'webp-converter-bridge'),
+            __('📊 Reportes', 'webp-converter-bridge'),
             'manage_options',
-            'webp-converter-logs',
-            [$this, 'render_logs_page']
+            'webp-converter-report',
+            [$this, 'render_report_page']
         );
     }
 
@@ -544,8 +544,9 @@ AddType image/webp .webp
                     <button type="button" class="button button-primary" id="wcb-start-bulk">
                         <?php esc_html_e('Iniciar Conversión', 'webp-converter-bridge'); ?>
                     </button>
-                    <?php esc_html_e('Detener', 'webp-converter-bridge'); ?>
-                </button>
+                    <button type="button" class="button" id="wcb-stop-bulk" disabled>
+                        <?php esc_html_e('Detener', 'webp-converter-bridge'); ?>
+                    </button>
             </div>
             
             <div id="wcb-bulk-log" style="margin-top: 15px; max-height: 150px; overflow-y: auto; background: #fff; border: 1px solid #ddd; padding: 10px; display: none;"></div>
@@ -696,6 +697,16 @@ AddType image/webp .webp
     }
 
     /**
+    * Renderiza la página de reportes.
+    *
+    * @return void
+    */
+    public function render_report_page(): void
+    {
+        require_once WCB_PLUGIN_DIR . 'report.php';
+    }
+
+    /**
      * AJAX: Scan for all image attachments.
      */
     public function ajax_scan_images(): void
@@ -791,8 +802,8 @@ AddType image/webp .webp
         }
 
         // We need to instantiate the Core class to use its logic
-        if (!class_exists('WebP_Converter_Bridge_Core')) {
-            require_once plugin_dir_path(__DIR__) . 'includes/class-wcb-converter.php';
+        if (!class_exists('WebP_Converter_Bridge_Converter')) {
+            require_once WCB_PLUGIN_DIR . 'includes/class-wcb-converter.php';
         }
 
         $converter = new WebP_Converter_Bridge_Converter($settings['api_base'], $settings['api_token'], $settings);
@@ -828,15 +839,7 @@ AddType image/webp .webp
         wp_send_json_success($results);
     }
     
-    /**
-     * Renderiza la página de logs y estadísticas.
-     *
-     * @return void
-     */
-    public function render_logs_page(): void
-    {
-        include WCB_PLUGIN_DIR . 'logs.php';
-    }
+
 
     /**
      * Escribe un mensaje en el log personalizado del plugin.

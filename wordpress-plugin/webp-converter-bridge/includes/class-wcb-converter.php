@@ -12,17 +12,19 @@ if (!defined('ABSPATH')) {
 /**
  * Core logic for WebP conversion and delivery.
  */
-class WebP_Converter_Bridge_Core
+class WebP_Converter_Bridge_Converter
 {
     private $api_base;
     private $api_token;
     private $settings;
 
-    public function __construct()
+    public function __construct($api_base = '', $api_token = '', $settings = [])
     {
-        $this->settings = get_option('wcb_settings', []);
-        $this->api_base = isset($this->settings['api_base']) ? rtrim($this->settings['api_base'], '/') : '';
-        $this->api_token = isset($this->settings['api_token']) ? $this->settings['api_token'] : '';
+        $this->settings = !empty($settings) ? $settings : get_option('wcb_settings', []);
+        
+        // Use passed arguments if available, otherwise fallback to settings
+        $this->api_base = !empty($api_base) ? rtrim($api_base, '/') : (isset($this->settings['api_base']) ? rtrim($this->settings['api_base'], '/') : '');
+        $this->api_token = !empty($api_token) ? $api_token : (isset($this->settings['api_token']) ? $this->settings['api_token'] : '');
     }
 
     /**

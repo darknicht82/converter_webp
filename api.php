@@ -185,8 +185,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 }
             }
 
-
-
             $zip->close();
 
             if (file_exists($zipFile)) {
@@ -293,10 +291,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $outputName = preg_replace('/[^A-Za-z0-9_\-]/', '_', $outputName);
                 
-                $tempSource = $input['tmp_name'];
-                $destination = CONVERT_DIR . $outputName . '.webp';
+                // Mover a directorio temporal seguro para evitar bloqueo por path traversal check
+                $safeTempSource = TEMP_DIR . 'upload_' . uniqid() . '_' . basename($input['name']);
+                logMessage('INFO', 'Moving uploaded file', ['from' => $input['tmp_name'], 'to' => $safeTempSource]);
                 
-                $success = $converter->convertToWebP($tempSource, $destination, $quality, $options);
+                if (!move_uploaded_file($input['tmp_name'], $safeTempSource)) {
+                    logMessage('ERROR', 'Failed to move uploaded file');
+                    jsonError('Error al mover archivo temporal', 500);
+                }
+                
+                $destination = CONVERT_DIR . $outputName . '.webp';
+                logMessage('INFO', 'Starting conversion', ['source' => $safeTempSource, 'dest' => $destination]);
+                
+                $success = $converter->convertToWebP($safeTempSource, $destination, $quality, $options);
+                logMessage('INFO', 'Conversion finished', ['success' => $success]);
+                
+                // Limpiar archivo temporal
+                @unlink($safeTempSource);
                 
                 if ($success) {
                     $fileSize = filesize($destination);

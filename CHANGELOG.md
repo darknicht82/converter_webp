@@ -2,6 +2,25 @@
 
 Todos los cambios notables del proyecto serán documentados aquí.
 
+## [Unreleased]
+### Added
+- **Dashboard:** Integrated client statistics view into main `index.php` with "Back to list" functionality.
+- **Plugin UI:** Added "Stop" button and real-time logging for Bulk Conversion.
+- **Plugin UI:** Created `report.php` with scoped CSS to replace problematic `logs.php`.
+
+### Changed
+- **Security:** Client dashboard URL now uses `client_id` instead of `api_token`.
+- **Refactor:** Renamed `WebP_Converter_Bridge_Core` to `WebP_Converter_Bridge_Converter`.
+- **API:** Improved file handling in `api.php` to prevent Path Traversal errors by using a safe temp directory.
+- **API:** Enforced `ob_clean()` in JSON responses to prevent empty bodies.
+- **Plugin:** Removed auto-refresh from reports page to reduce server load.
+
+### Fixed
+- **Critical:** Fixed Error 500 in Bulk Conversion caused by incorrect class loading and naming.
+- **UI:** Fixed WordPress admin layout breakage caused by global CSS in logs page.
+- **Bug:** Fixed `number_format` error in client dashboard.
+- **Bug:** Fixed syntax error in `api.php` download-plugin section.
+
 ## [Estabilidad y Logs Detallados] - 2025-11-21 (Sesión 2)
 
 ### 🐛 Correcciones Críticas

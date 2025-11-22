@@ -571,6 +571,159 @@ function format_mb(float $value): string
             </div>
         </div>
     </nav>
+<?php
+// View Controller Logic
+$currentView = $_GET['view'] ?? 'list';
+$viewClientId = isset($_GET['client_id']) ? (int)$_GET['client_id'] : 0;
+
+if ($currentView === 'stats' && $viewClientId > 0) {
+    $clientStats = getIntegrationClientById($viewClientId);
+    if (!$clientStats) {
+        $errors[] = 'Cliente no encontrado.';
+        $currentView = 'list';
+    } else {
+        // Fetch stats for this client
+        $db = getIntegrationPdo();
+        $stmtStats = $db->prepare("
+            SELECT 
+                COUNT(*) as total_conversions,
+                SUM(cost) as total_cost,
+                SUM(source_bytes) as total_source_bytes,
+                SUM(converted_bytes) as total_converted_bytes
+            FROM conversion_events 
+            WHERE client_id = :id
+        ");
+        $stmtStats->execute([':id' => $viewClientId]);
+        $statsData = $stmtStats->fetch(PDO::FETCH_ASSOC);
+
+        // Fetch recent events
+        $stmtEvents = $db->prepare("
+            SELECT * FROM conversion_events 
+            WHERE client_id = :id 
+            ORDER BY created_at DESC 
+            LIMIT 20
+        ");
+        $stmtEvents->execute([':id' => $viewClientId]);
+        $clientEvents = $stmtEvents->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Helper for bytes
+        function format_bytes_view($bytes, $precision = 2) { 
+            $units = array('B', 'KB', 'MB', 'GB', 'TB'); 
+            $bytes = max($bytes, 0); 
+            $pow = floor(($bytes ? log($bytes) : 0) / log(1024)); 
+            $pow = min($pow, count($units) - 1); 
+            $bytes /= pow(1024, $pow); 
+            return round($bytes, $precision) . ' ' . $units[$pow]; 
+        }
+    }
+}
+
+if ($currentView === 'stats' && isset($clientStats)): ?>
+    <!-- STATS VIEW -->
+    <div class="container">
+        <div style="margin-bottom: 20px;">
+            <a href="index.php" class="secondary-link">← Volver al listado</a>
+        </div>
+        
+        <div class="header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid rgba(148, 163, 184, 0.2); padding-bottom: 20px;">
+            <div>
+                <h1 style="margin: 0;"><?php echo htmlspecialchars($clientStats['client_name']); ?></h1>
+                <div style="color: #94a3b8; font-size: 14px; margin-top: 5px;">
+                    <?php echo htmlspecialchars($clientStats['contact_email'] ?? ''); ?> • 
+                    Estado: <span style="color: <?php echo $clientStats['status'] === 'active' ? '#4ade80' : '#facc15'; ?>"><?php echo ucfirst($clientStats['status']); ?></span>
+                </div>
+            </div>
+            <div style="text-align: right;">
+                <div style="font-size: 12px; color: #94a3b8;">TOKEN</div>
+                <code style="background: rgba(0,0,0,0.3); padding: 4px 8px; border-radius: 4px; color: #e2e8f0; cursor: pointer;" onclick="copyToken(this, '<?php echo htmlspecialchars($clientStats['api_token']); ?>')">
+                    <?php echo substr($clientStats['api_token'], 0, 10) . '...' . substr($clientStats['api_token'], -5); ?>
+                </code>
+            </div>
+        </div>
+
+        <div class="cards">
+            <div class="card">
+                <h3>Imágenes Procesadas</h3>
+                <div class="card-value"><?php echo number_format((int)($statsData['total_conversions'] ?? 0)); ?></div>
+                <?php if (($clientStats['monthly_quota'] ?? 0) > 0): ?>
+                    <div style="font-size: 12px; margin-top: 5px; color: #94a3b8;">
+                        de <?php echo number_format($clientStats['monthly_quota']); ?> mensuales
+                    </div>
+                    <div style="height: 6px; background: rgba(148, 163, 184, 0.2); border-radius: 3px; margin-top: 10px; overflow: hidden;">
+                        <div style="height: 100%; background: linear-gradient(90deg, #38bdf8, #818cf8); width: <?php 
+                            $quota = $clientStats['monthly_quota'];
+                            $used = $statsData['total_conversions'] ?? 0;
+                            echo min(100, ($used / $quota) * 100); 
+                        ?>%;"></div>
+                    </div>
+                <?php endif; ?>
+            </div>
+            <div class="card">
+                <h3>Costo Acumulado</h3>
+                <div class="card-value">$<?php echo number_format((float)($statsData['total_cost'] ?? 0), 2); ?></div>
+                <div style="font-size: 12px; margin-top: 5px; color: #94a3b8;">
+                    $<?php echo number_format((float)($clientStats['cost_per_image'] ?? 0), 3); ?> / imagen
+                </div>
+            </div>
+            <div class="card">
+                <h3>Ahorro de Ancho de Banda</h3>
+                <div class="card-value">
+                    <?php 
+                    $saved = ($statsData['total_source_bytes'] ?? 0) - ($statsData['total_converted_bytes'] ?? 0);
+                    echo format_bytes_view($saved); 
+                    ?>
+                </div>
+                <div style="font-size: 12px; margin-top: 5px; color: #94a3b8;">
+                    <?php 
+                    if (($statsData['total_source_bytes'] ?? 0) > 0) {
+                        echo round(($saved / $statsData['total_source_bytes']) * 100, 1) . '% reducción';
+                    } else {
+                        echo '0% reducción';
+                    }
+                    ?>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2 style="margin-top: 0; margin-bottom: 20px; font-size: 18px;">Últimas 20 Conversiones</h2>
+            <?php if (empty($clientEvents)): ?>
+                <p class="empty">No hay actividad reciente.</p>
+            <?php else: ?>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Archivo</th>
+                            <th>Tamaño Original</th>
+                            <th>Tamaño WebP</th>
+                            <th>Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($clientEvents as $event): ?>
+                        <tr>
+                            <td><?php echo date('d/m/Y H:i', strtotime($event['created_at'])); ?></td>
+                            <td><?php echo htmlspecialchars($event['source_filename'] ?? 'Desconocido'); ?></td>
+                            <td><?php echo format_bytes_view((int)($event['source_bytes'] ?? 0)); ?></td>
+                            <td><?php echo format_bytes_view((int)($event['converted_bytes'] ?? 0)); ?></td>
+                            <td>
+                                <?php 
+                                $status = $event['status'] ?? 'success';
+                                $color = $status === 'success' ? '#4ade80' : '#f87171';
+                                ?>
+                                <span style="color: <?php echo $color; ?>"><?php echo ucfirst($status); ?></span>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+    </div>
+
+<?php else: ?>
+    <!-- LIST VIEW (Default) -->
     <div class="container">
         <h1>Dashboard WordPress</h1>
         <p class="lead">
@@ -589,6 +742,7 @@ function format_mb(float $value): string
         <?php endif; ?>
 
         <div class="form-grid">
+            <!-- ... (Forms remain the same, just ensuring they are inside this else block) ... -->
             <section class="form-panel">
                 <h2>Crear nuevo cliente</h2>
                 <p style="color: rgba(226,232,240,0.7); margin-bottom: 18px;">
@@ -729,10 +883,18 @@ function format_mb(float $value): string
                         <?php foreach ($clients as $client): ?>
                             <tr>
                                 <td>
-                                    <strong><?php echo htmlspecialchars($client['client_name'] ?? 'Sin nombre'); ?></strong><br>
+                                    <strong>
+                                        <a href="index.php?view=stats&client_id=<?php echo (int)$client['id']; ?>" style="color: inherit; text-decoration: none; border-bottom: 1px dotted #94a3b8;" title="Ver Dashboard">
+                                            <?php echo htmlspecialchars($client['client_name'] ?? 'Sin nombre'); ?> ↗
+                                        </a>
+                                    </strong><br>
                                     <small><?php echo htmlspecialchars($client['contact_email'] ?? 'sin correo'); ?></small>
                                 </td>
-                                <td><span class="token"><?php echo htmlspecialchars($client['api_token']); ?></span></td>
+                                <td>
+                                    <span class="token" onclick="copyToken(this, '<?php echo htmlspecialchars($client['api_token']); ?>')" style="cursor: pointer; position: relative;" title="Click para copiar">
+                                        <?php echo htmlspecialchars(substr($client['api_token'], 0, 10) . '...' . substr($client['api_token'], -5)); ?>
+                                    </span>
+                                </td>
                                 <td>
                                     <?php
                                     $status = $client['status'] ?? 'active';
@@ -803,12 +965,26 @@ function format_mb(float $value): string
             </aside>
         </div>
     </div>
+<?php endif; ?>
     <script>
-        window.APP_CONFIG = Object.assign(window.APP_CONFIG || {}, {
-            apiBase: '<?php echo CORE_API_PUBLIC_ENDPOINT; ?>',
-            authBase: '<?php echo AUTH_PUBLIC_ENDPOINT; ?>'
-        });
+        function copyToken(element, token) {
+            navigator.clipboard.writeText(token).then(() => {
+                const originalText = element.innerText;
+                element.innerText = 'Copiado!';
+                element.style.color = '#4ade80';
+                
+                setTimeout(() => {
+                    element.innerText = originalText;
+                    element.style.color = '#5eead4';
+                }, 1500);
+            }).catch(err => {
+                console.error('Error al copiar: ', err);
+            });
+        }
     </script>
 </body>
 </html>
+<?php
+// End of main script
+?>
 
