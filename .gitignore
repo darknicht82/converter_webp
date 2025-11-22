@@ -1,0 +1,37 @@
+# Archivos de entorno
+.env
+.env.local
+
+# Carpetas de datos
+/upload/*
+!/upload/.gitkeep
+/convert/*
+!/convert/.gitkeep
+/logs/*
+!/logs/.gitkeep
+/temp/*
+!/temp/.gitkeep
+
+# Archivos temporales
+*.tmp
+*.temp
+*.bak
+*-copia.*
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Docker
+.dockerignore
+

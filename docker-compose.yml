@@ -1,0 +1,101 @@
+version: "3.9"
+
+networks:
+  webp_backend:
+    driver: bridge
+
+volumes:
+  media_data:
+  database_data:
+
+services:
+  webp-core:
+    build:
+      context: .
+      dockerfile: services/webp-core/Dockerfile
+    container_name: webp-core
+    environment:
+      - DOCKER_ENV=1
+      - AUTH_ACCESS_TTL=${AUTH_ACCESS_TTL:-3600}
+      - AUTH_REFRESH_TTL=${AUTH_REFRESH_TTL:-2592000}
+    volumes:
+      - ./:/var/www/html
+      - media_data:/var/www/html/media
+      - database_data:/var/www/html/database
+    networks:
+      - webp_backend
+    expose:
+      - "80"
+
+  webp-online:
+    build:
+      context: .
+      dockerfile: services/webp-online/Dockerfile
+    container_name: webp-online
+    environment:
+      - DOCKER_ENV=1
+    volumes:
+      - ./:/var/www/html
+    depends_on:
+      - webp-core
+    networks:
+      - webp_backend
+    expose:
+      - "80"
+
+  webp-wordpress:
+    build:
+      context: .
+      dockerfile: services/webp-wordpress/Dockerfile
+    container_name: webp-wordpress
+    environment:
+      - DOCKER_ENV=1
+    volumes:
+      - ./:/var/www/html
+      - database_data:/var/www/html/database
+    depends_on:
+      - webp-core
+    networks:
+      - webp_backend
+    expose:
+      - "80"
+
+  social-designer:
+    build:
+      context: .
+      dockerfile: services/social-designer/Dockerfile
+    container_name: social-designer
+    environment:
+      - NODE_ENV=development
+    volumes:
+      - ./social-designer:/app
+    depends_on:
+      - webp-core
+    networks:
+      - webp_backend
+    expose:
+      - "5173"
+
+  nginx-gateway:
+    build:
+      context: services/nginx-gateway
+      dockerfile: Dockerfile
+    container_name: webp-gateway
+    depends_on:
+      - webp-core
+      - webp-online
+      - webp-wordpress
+      - social-designer
+    ports:
+      - "${WEBP_HOST_PORT:-9191}:80"
+    networks:
+      - webp_backend
+
+# Uso básico:
+#   docker compose up -d
+#   docker compose logs -f
+#   docker compose down
+#
+# Gateway por defecto:
+#   http://localhost:${WEBP_HOST_PORT:-9191}/webp/
+#   http://localhost:${WEBP_HOST_PORT:-9191}/api.php

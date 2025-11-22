@@ -1,0 +1,82 @@
+# .htaccess para WebP Converter
+# Configuración de Apache
+
+# Habilitar RewriteEngine
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /webp/
+    
+    # Forzar HTTPS (descomenta en producción)
+    # RewriteCond %{HTTPS} off
+    # RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+    
+    # API endpoint friendly URLs
+    RewriteRule ^api/health$ api.php?action=health [L,QSA]
+    RewriteRule ^api/list/([a-z]+)$ api.php?action=list&type=$1 [L,QSA]
+</IfModule>
+
+# Seguridad
+<IfModule mod_headers.c>
+    # Prevenir clickjacking
+    Header set X-Frame-Options "SAMEORIGIN"
+    
+    # Prevenir XSS
+    Header set X-XSS-Protection "1; mode=block"
+    
+    # Prevenir MIME sniffing
+    Header set X-Content-Type-Options "nosniff"
+    
+    # Referrer policy
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+    
+    # CORS para API (permitir todos los orígenes)
+    <FilesMatch "\.(php)$">
+        Header set Access-Control-Allow-Origin "*"
+        Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        Header set Access-Control-Allow-Headers "Content-Type, X-API-Token"
+    </FilesMatch>
+</IfModule>
+
+# Bloquear acceso a archivos sensibles
+<FilesMatch "^(config\.php|converter\.php|\.env|\.gitignore)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Prevenir listado de directorios
+Options -Indexes
+
+# Proteger directorios de logs (usando RedirectMatch en lugar de DirectoryMatch)
+<IfModule mod_rewrite.c>
+    RewriteRule ^logs/ - [F,L]
+</IfModule>
+
+# Limitar tamaño de subida
+php_value upload_max_filesize 50M
+php_value post_max_size 50M
+php_value memory_limit 512M
+php_value max_execution_time 300
+
+# Comprimir respuestas
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css text/javascript application/json
+</IfModule>
+
+# Cache para imágenes WebP
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/webp "access plus 1 month"
+    ExpiresByType image/jpeg "access plus 1 month"
+    ExpiresByType image/png "access plus 1 month"
+</IfModule>
+
+# Permitir OPTIONS para CORS
+<LimitExcept GET POST OPTIONS>
+    Require all denied
+</LimitExcept>
+
