@@ -1,3 +1,4 @@
+
 # 🖼️ Conversor WebP v2.0
 
 Herramienta híbrida para convertir imágenes JPG/PNG/GIF a formato WebP con interfaz visual y API REST para automatización.
