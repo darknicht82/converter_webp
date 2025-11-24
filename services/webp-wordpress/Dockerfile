@@ -6,7 +6,8 @@ RUN apt-get update \
         libpng-dev \
         libjpeg62-turbo-dev \
         libfreetype6-dev \
-    && docker-php-ext-install zip \
+        libpq-dev \
+    && docker-php-ext-install zip pdo_pgsql \
     && a2enmod rewrite headers \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*

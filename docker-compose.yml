@@ -6,7 +6,9 @@ networks:
 
 volumes:
   media_data:
+  postgres_data:
   database_data:
+
 
 services:
   webp-core:
@@ -75,6 +77,21 @@ services:
       - webp_backend
     expose:
       - "5173"
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: webp-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-webp_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-webp_password}
+      POSTGRES_DB: ${DB_NAME:-webp_integration}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    networks:
+      - webp_backend
 
   nginx-gateway:
     build:

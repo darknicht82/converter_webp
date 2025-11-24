@@ -1,12 +1,4 @@
-<?php
-/**
- * Integration Database helpers for WordPress module.
- * Supports SQLite (legacy) and PostgreSQL (production).
- */
-
-/**
- * Obtiene una instancia compartida de PDO.
- *
+time="2025-11-23T16:35:25-05:00" level=warning msg="C:\\MAMP\\htdocs\\webp\\docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
  * @return PDO
  */
 function getIntegrationPdo(): PDO
@@ -92,19 +84,8 @@ function initializeIntegrationDatabase(): void
     try {
         $pdo->beginTransaction();
 
-        // Helper to execute and debug
-        $execSql = function($sql) use ($pdo) {
-            try {
-                $pdo->exec($sql);
-            } catch (PDOException $e) {
-                $msg = "SQL Error: " . $e->getMessage() . " | SQL: " . $sql;
-                error_log($msg);
-                throw new RuntimeException($msg);
-            }
-        };
-
         // 1. Clients
-        $execSql("CREATE TABLE IF NOT EXISTS integration_clients (
+        $pdo->exec("CREATE TABLE IF NOT EXISTS integration_clients (
             id $pk,
             client_name TEXT NOT NULL,
             contact_email TEXT,
@@ -113,13 +94,13 @@ function initializeIntegrationDatabase(): void
             monthly_quota INTEGER DEFAULT NULL,
             cost_per_image REAL DEFAULT 0,
             notes TEXT,
-            created_at " . $timestampType . " NOT NULL DEFAULT " . $now . ",
-            updated_at " . $timestampType . " NOT NULL DEFAULT " . $now . ",
-            last_used_at " . $timestampType . "
+            created_at $timestampType NOT NULL DEFAULT $now,
+            updated_at $timestampType NOT NULL DEFAULT $now,
+            last_used_at $timestampType
         )");
 
         // 2. Metrics
-        $execSql("CREATE TABLE IF NOT EXISTS conversion_metrics (
+        $pdo->exec("CREATE TABLE IF NOT EXISTS conversion_metrics (
             id $pk,
             client_id INTEGER NOT NULL,
             period_key TEXT NOT NULL,
@@ -127,14 +108,14 @@ function initializeIntegrationDatabase(): void
             total_source_bytes BIGINT NOT NULL DEFAULT 0,
             total_converted_bytes BIGINT NOT NULL DEFAULT 0,
             total_cost REAL NOT NULL DEFAULT 0,
-            created_at " . $timestampType . " NOT NULL DEFAULT " . $now . ",
-            updated_at " . $timestampType . " NOT NULL DEFAULT " . $now . ",
+            created_at $timestampType NOT NULL DEFAULT $now,
+            updated_at $timestampType NOT NULL DEFAULT $now,
             UNIQUE(client_id, period_key),
             FOREIGN KEY(client_id) REFERENCES integration_clients(id) ON DELETE CASCADE
         )");
 
         // 3. Events
-        $execSql("CREATE TABLE IF NOT EXISTS conversion_events (
+        $pdo->exec("CREATE TABLE IF NOT EXISTS conversion_events (
             id $pk,
             client_id INTEGER,
             api_token TEXT,
@@ -144,12 +125,12 @@ function initializeIntegrationDatabase(): void
             source_bytes BIGINT DEFAULT 0,
             converted_bytes BIGINT DEFAULT 0,
             cost REAL DEFAULT 0,
-            created_at " . $timestampType . " NOT NULL DEFAULT " . $now . ",
+            created_at $timestampType NOT NULL DEFAULT $now,
             FOREIGN KEY(client_id) REFERENCES integration_clients(id) ON DELETE SET NULL
         )");
 
         // 4. Users
-        $execSql("CREATE TABLE IF NOT EXISTS integration_users (
+        $pdo->exec("CREATE TABLE IF NOT EXISTS integration_users (
             id $pk,
             email TEXT NOT NULL UNIQUE,
             password_hash TEXT,
@@ -158,13 +139,13 @@ function initializeIntegrationDatabase(): void
             role TEXT NOT NULL DEFAULT 'manager',
             avatar_url TEXT,
             phone TEXT,
-            created_at " . $timestampType . " NOT NULL DEFAULT " . $now . ",
-            updated_at " . $timestampType . " NOT NULL DEFAULT " . $now . ",
-            last_login_at " . $timestampType . "
+            created_at $timestampType NOT NULL DEFAULT $now,
+            updated_at $timestampType NOT NULL DEFAULT $now,
+            last_login_at $timestampType
         )");
 
         // 5. User Providers
-        $execSql("CREATE TABLE IF NOT EXISTS integration_user_providers (
+        $pdo->exec("CREATE TABLE IF NOT EXISTS integration_user_providers (
             id $pk,
             user_id INTEGER NOT NULL,
             provider TEXT NOT NULL,
@@ -172,58 +153,59 @@ function initializeIntegrationDatabase(): void
             email TEXT,
             access_token TEXT,
             refresh_token TEXT,
-            token_expires_at " . $timestampType . ",
-            created_at " . $timestampType . " NOT NULL DEFAULT " . $now . ",
+            token_expires_at $timestampType,
+            created_at $timestampType NOT NULL DEFAULT $now,
             UNIQUE(provider, provider_user_id),
             FOREIGN KEY(user_id) REFERENCES integration_users(id) ON DELETE CASCADE
         )");
 
         // 6. Sessions
-        $execSql("CREATE TABLE IF NOT EXISTS integration_sessions (
+        $pdo->exec("CREATE TABLE IF NOT EXISTS integration_sessions (
             id $pk,
             user_id INTEGER NOT NULL,
             session_token TEXT NOT NULL UNIQUE,
             refresh_token TEXT NOT NULL UNIQUE,
-            expires_at " . $timestampType . " NOT NULL,
-            refresh_expires_at " . $timestampType . " NOT NULL,
+            expires_at $timestampType NOT NULL,
+            refresh_expires_at $timestampType NOT NULL,
             ip_address TEXT,
             user_agent TEXT,
-            created_at " . $timestampType . " NOT NULL DEFAULT " . $now . ",
-            revoked_at " . $timestampType . ",
+            created_at $timestampType NOT NULL DEFAULT $now,
+            revoked_at $timestampType,
             FOREIGN KEY(user_id) REFERENCES integration_users(id) ON DELETE CASCADE
         )");
 
         // 7. User Clients
-        $execSql("CREATE TABLE IF NOT EXISTS integration_user_clients (
+        $pdo->exec("CREATE TABLE IF NOT EXISTS integration_user_clients (
             id $pk,
             user_id INTEGER NOT NULL,
             client_id INTEGER NOT NULL,
             role TEXT NOT NULL DEFAULT 'owner',
-            created_at " . $timestampType . " NOT NULL DEFAULT " . $now . ",
-            revoked_at " . $timestampType . ",
+            created_at $timestampType NOT NULL DEFAULT $now,
+            revoked_at $timestampType,
             UNIQUE(user_id, client_id),
             FOREIGN KEY(user_id) REFERENCES integration_users(id) ON DELETE CASCADE,
             FOREIGN KEY(client_id) REFERENCES integration_clients(id) ON DELETE CASCADE
         )");
 
         // 8. API Tokens
-        $execSql("CREATE TABLE IF NOT EXISTS integration_api_tokens (
+        $pdo->exec("CREATE TABLE IF NOT EXISTS integration_api_tokens (
             id $pk,
             user_id INTEGER NOT NULL,
             client_id INTEGER NOT NULL,
             token_hash TEXT NOT NULL UNIQUE,
             label TEXT,
             scopes TEXT,
-            expires_at " . $timestampType . ",
-            last_used_at " . $timestampType . ",
-            created_at " . $timestampType . " NOT NULL DEFAULT " . $now . ",
-            revoked_at " . $timestampType . ",
+            expires_at $timestampType,
+            last_used_at $timestampType,
+            created_at $timestampType NOT NULL DEFAULT $now,
+            revoked_at $timestampType,
+            UNIQUE(user_id, client_id, label),
             FOREIGN KEY(user_id) REFERENCES integration_users(id) ON DELETE CASCADE,
             FOREIGN KEY(client_id) REFERENCES integration_clients(id) ON DELETE CASCADE
         )");
 
         // 9. Conversion Logs
-        $execSql("CREATE TABLE IF NOT EXISTS conversion_logs (
+        $pdo->exec("CREATE TABLE IF NOT EXISTS conversion_logs (
             id $pk,
             client_id INTEGER NOT NULL,
             filename TEXT NOT NULL,
@@ -233,18 +215,18 @@ function initializeIntegrationDatabase(): void
             savings_percent REAL NOT NULL,
             cost REAL NOT NULL DEFAULT 0.00,
             status TEXT NOT NULL DEFAULT 'success',
-            created_at " . $timestampType . " NOT NULL DEFAULT " . $now . ",
+            created_at $timestampType NOT NULL DEFAULT $now,
             FOREIGN KEY(client_id) REFERENCES integration_clients(id) ON DELETE CASCADE
         )");
 
         // Indices
-        $execSql("CREATE INDEX IF NOT EXISTS idx_clients_status ON integration_clients(status)");
-        $execSql("CREATE INDEX IF NOT EXISTS idx_metrics_period ON conversion_metrics(period_key)");
-        $execSql("CREATE INDEX IF NOT EXISTS idx_events_created_at ON conversion_events(created_at)");
-        $execSql("CREATE INDEX IF NOT EXISTS idx_users_status ON integration_users(status)");
-        $execSql("CREATE INDEX IF NOT EXISTS idx_sessions_user ON integration_sessions(user_id)");
-        $execSql("CREATE INDEX IF NOT EXISTS idx_user_clients_user ON integration_user_clients(user_id)");
-        $execSql("CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON integration_api_tokens(user_id)");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_clients_status ON integration_clients(status)");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_metrics_period ON conversion_metrics(period_key)");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_events_created_at ON conversion_events(created_at)");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_users_status ON integration_users(status)");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_sessions_user ON integration_sessions(user_id)");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_user_clients_user ON integration_user_clients(user_id)");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON integration_api_tokens(user_id)");
 
         $pdo->commit();
         $initialized = true;
@@ -407,55 +389,6 @@ function recordIntegrationConversion(array $client, array $payload): bool
     } catch (PDOException $e) {
         $pdo->rollBack();
         logIntegrationEvent('ERROR', 'Conversion record failed', ['error' => $e->getMessage()]);
-        return false;
-    }
-}
-
-/**
- * Log a conversion event to the database.
- */
-function logConversion(int $clientId, string $sourceFilename, int $sourceBytes, int $convertedBytes, float $cost, string $status): void
-{
-    $pdo = getIntegrationPdo();
-    $stmt = $pdo->prepare("INSERT INTO conversion_events (client_id, source_filename, source_bytes, converted_bytes, cost, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
-    $stmt->execute([$clientId, $sourceFilename, $sourceBytes, $convertedBytes, $cost, $status, time()]);
-}
-
-/**
- * Log an integration conversion to conversion_logs table.
- * This is called by the WordPress plugin via the API.
- */
-function logIntegrationConversion(int $clientId, string $filename, int $originalSize, int $webpSize, float $cost): bool
-{
-    try {
-        $pdo = getIntegrationPdo();
-        $now = getSqlTimestampFunction();
-        
-        $savingsBytes = $originalSize - $webpSize;
-        $savingsPercent = $originalSize > 0 ? ($savingsBytes / $originalSize) * 100 : 0;
-        
-        $sql = "INSERT INTO conversion_logs 
-                (client_id, filename, original_size, webp_size, savings_bytes, savings_percent, cost, status, created_at)
-                VALUES (:client_id, :filename, :original_size, :webp_size, :savings_bytes, :savings_percent, :cost, :status, $now)";
-        
-        $stmt = $pdo->prepare($sql);
-        $result = $stmt->execute([
-            ':client_id' => $clientId,
-            ':filename' => $filename,
-            ':original_size' => $originalSize,
-            ':webp_size' => $webpSize,
-            ':savings_bytes' => $savingsBytes,
-            ':savings_percent' => $savingsPercent,
-            ':cost' => $cost,
-            ':status' => 'success'
-        ]);
-        
-        // Update client's last_used_at
-        touchIntegrationClientUsage($clientId);
-        
-        return $result;
-    } catch (PDOException $e) {
-        logIntegrationEvent('ERROR', 'Failed to log integration conversion', ['error' => $e->getMessage()]);
         return false;
     }
 }
@@ -655,3 +588,171 @@ function revokeIntegrationApiToken(int $id): void
     $stmt = $pdo->prepare("UPDATE integration_api_tokens SET revoked_at = $now WHERE id = :id");
     $stmt->execute([':id' => $id]);
 }
+
+function getIntegrationClientsForUser(int $userId): array
+{
+    $pdo = getIntegrationPdo();
+    $stmt = $pdo->prepare('SELECT c.*, uc.role AS user_role, uc.created_at AS assigned_at FROM integration_user_clients uc INNER JOIN integration_clients c ON c.id = uc.client_id WHERE uc.user_id = :user_id AND uc.revoked_at IS NULL ORDER BY c.created_at DESC');
+    $stmt->execute([':user_id' => $userId]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function createIntegrationClient(array $data): ?array
+{
+    $pdo = getIntegrationPdo();
+    $now = getSqlTimestampFunction();
+    $token = $data['api_token'] ?? generateIntegrationToken();
+    $status = in_array($data['status'] ?? 'active', ['active', 'paused', 'revoked']) ? ($data['status'] ?? 'active') : 'active';
+
+    $stmt = $pdo->prepare("INSERT INTO integration_clients (client_name, contact_email, api_token, status, monthly_quota, cost_per_image, notes, created_at, updated_at) VALUES (:client_name, :contact_email, :api_token, :status, :monthly_quota, :cost_per_image, :notes, $now, $now)");
+    $stmt->execute([
+        ':client_name' => $data['client_name'],
+        ':contact_email' => $data['contact_email'] ?? null,
+        ':api_token' => $token,
+        ':status' => $status,
+        ':monthly_quota' => $data['monthly_quota'],
+        ':cost_per_image' => $data['cost_per_image'],
+        ':notes' => $data['notes'] ?? null
+    ]);
+
+    $id = (int)$pdo->lastInsertId();
+    return getIntegrationClientById($id);
+}
+
+function updateIntegrationClient(int $id, array $data): bool
+{
+    $pdo = getIntegrationPdo();
+    $status = in_array($data['status'] ?? 'active', ['active', 'paused', 'revoked']) ? ($data['status'] ?? 'active') : 'active';
+    
+    $stmt = $pdo->prepare('UPDATE integration_clients SET client_name = :client_name, contact_email = :contact_email, status = :status, monthly_quota = :monthly_quota, cost_per_image = :cost_per_image, notes = :notes WHERE id = :id');
+    return $stmt->execute([
+        ':client_name' => $data['client_name'],
+        ':contact_email' => $data['contact_email'] ?? null,
+        ':status' => $status,
+        ':monthly_quota' => $data['monthly_quota'],
+        ':cost_per_image' => $data['cost_per_image'],
+        ':notes' => $data['notes'] ?? null,
+        ':id' => $id
+    ]);
+}
+
+function regenerateIntegrationClientToken(int $id, int $length = 48): ?string
+{
+    $pdo = getIntegrationPdo();
+    $now = getSqlTimestampFunction();
+    $token = generateIntegrationToken($length);
+    $stmt = $pdo->prepare("UPDATE integration_clients SET api_token = :token, updated_at = $now WHERE id = :id");
+    return $stmt->execute([':token' => $token, ':id' => $id]) ? $token : null;
+}
+
+function fetchIntegrationStats(): array
+{
+    $pdo = getIntegrationPdo();
+    $stats = [
+        'total_clients' => 0, 'active_clients' => 0, 'paused_clients' => 0,
+        'total_conversions' => 0, 'total_cost' => 0.0, 'total_source_mb' => 0.0, 'total_converted_mb' => 0.0
+    ];
+
+    $clientsStmt = $pdo->query("SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active, SUM(CASE WHEN status != 'active' THEN 1 ELSE 0 END) AS inactive FROM integration_clients");
+    if ($row = $clientsStmt->fetch(PDO::FETCH_ASSOC)) {
+        $stats['total_clients'] = (int)$row['total'];
+        $stats['active_clients'] = (int)$row['active'];
+        $stats['paused_clients'] = (int)$row['inactive'];
+    }
+
+    $metricsStmt = $pdo->query('SELECT SUM(images_processed) AS conversions, SUM(total_cost) AS cost, SUM(total_source_bytes) AS source_bytes, SUM(total_converted_bytes) AS converted_bytes FROM conversion_metrics');
+    if ($row = $metricsStmt->fetch(PDO::FETCH_ASSOC)) {
+        $stats['total_conversions'] = (int)($row['conversions'] ?? 0);
+        $stats['total_cost'] = (float)($row['cost'] ?? 0);
+        $stats['total_source_mb'] = round(((int)($row['source_bytes'] ?? 0)) / 1048576, 2);
+        $stats['total_converted_mb'] = round(((int)($row['converted_bytes'] ?? 0)) / 1048576, 2);
+    }
+    return $stats;
+}
+
+function fetchIntegrationClientsWithMetrics(): array
+{
+    $pdo = getIntegrationPdo();
+    $stmt = $pdo->query('SELECT c.*, COALESCE(m.images_processed, 0) AS images_processed, COALESCE(m.total_cost, 0) AS total_cost, COALESCE(m.total_source_bytes, 0) AS total_source_bytes, COALESCE(m.total_converted_bytes, 0) AS total_converted_bytes FROM integration_clients c LEFT JOIN (SELECT client_id, SUM(images_processed) AS images_processed, SUM(total_cost) AS total_cost, SUM(total_source_bytes) AS total_source_bytes, SUM(total_converted_bytes) AS total_converted_bytes FROM conversion_metrics GROUP BY client_id) m ON m.client_id = c.id ORDER BY c.created_at DESC');
+    
+    $clients = [];
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $row['images_processed'] = (int)($row['images_processed'] ?? 0);
+        $row['total_cost'] = (float)($row['total_cost'] ?? 0);
+        $row['total_source_mb'] = round(((int)($row['total_source_bytes'] ?? 0)) / 1048576, 2);
+        $row['total_converted_mb'] = round(((int)($row['total_converted_bytes'] ?? 0)) / 1048576, 2);
+        $clients[] = $row;
+    }
+    return $clients;
+}
+
+function fetchRecentIntegrationEvents(int $limit = 10): array
+{
+    $pdo = getIntegrationPdo();
+    $stmt = $pdo->prepare('SELECT e.*, c.client_name FROM conversion_events e LEFT JOIN integration_clients c ON c.id = e.client_id ORDER BY e.created_at DESC LIMIT :limit');
+    $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+    $stmt->execute();
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function fetchIntegrationEventsPaginated(int $page = 1, int $perPage = 20): array
+{
+    $pdo = getIntegrationPdo();
+    $page = max(1, $page);
+    $offset = ($page - 1) * $perPage;
+
+    $total = (int)$pdo->query('SELECT COUNT(*) FROM conversion_events')->fetchColumn();
+    $pages = ceil($total / $perPage);
+
+    $stmt = $pdo->prepare('SELECT e.*, c.client_name FROM conversion_events e LEFT JOIN integration_clients c ON c.id = e.client_id ORDER BY e.created_at DESC LIMIT :limit OFFSET :offset');
+    $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
+    $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $stmt->execute();
+
+    return [
+        'events' => $stmt->fetchAll(PDO::FETCH_ASSOC),
+        'total' => $total,
+        'pages' => $pages,
+        'current_page' => $page
+    ];
+}
+
+function updateIntegrationConversionUrl(int $clientId, string $webpFilename, string $webpUrl): bool
+{
+    $pdo = getIntegrationPdo();
+    try {
+        // Subquery might be slow on large datasets, but acceptable for now
+        $stmt = $pdo->prepare('UPDATE conversion_events SET webp_url = :url WHERE id = (SELECT id FROM conversion_events WHERE client_id = :client_id AND webp_filename = :filename ORDER BY created_at DESC LIMIT 1)');
+        $stmt->execute([':url' => $webpUrl, ':client_id' => $clientId, ':filename' => $webpFilename]);
+        return $stmt->rowCount() > 0;
+    } catch (PDOException $e) {
+        logIntegrationEvent('ERROR', 'Update URL failed', ['error' => $e->getMessage()]);
+        return false;
+    }
+}
+
+function logConversion(int $clientId, string $filename, int $originalSize, int $webpSize, float $cost, string $status = 'success'): void
+{
+    $pdo = getIntegrationPdo();
+    $now = getSqlTimestampFunction();
+    $savingsBytes = $originalSize - $webpSize;
+    $savingsPercent = $originalSize > 0 ? ($savingsBytes / $originalSize) * 100 : 0;
+
+    $stmt = $pdo->prepare("INSERT INTO conversion_logs (client_id, filename, original_size, webp_size, savings_bytes, savings_percent, cost, status, created_at) VALUES (:client_id, :filename, :original_size, :webp_size, :savings_bytes, :savings_percent, :cost, :status, $now)");
+    $stmt->execute([
+        ':client_id' => $clientId,
+        ':filename' => $filename,
+        ':original_size' => $originalSize,
+        ':webp_size' => $webpSize,
+        ':savings_bytes' => $savingsBytes,
+        ':savings_percent' => $savingsPercent,
+        ':cost' => $cost,
+        ':status' => $status
+    ]);
+}
+
+Fatal error: Uncaught Error: Call to undefined function initializeIntegrationDatabase() in /var/www/html/config.php:156
+Stack trace:
+#0 /var/www/html/test-db.php(2): require_once()
+#1 {main}
+  thrown in /var/www/html/config.php on line 156

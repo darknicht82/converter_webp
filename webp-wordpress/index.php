@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/../lib/integration-dashboard.php';
 
 session_start();
 
@@ -175,23 +176,17 @@ if ($requestedEditId) {
     }
 }
 
-$stats = fetchIntegrationStats();
-$clients = fetchIntegrationClientsWithMetrics();
-$events = fetchRecentIntegrationEvents(8);
-
-$statusOptions = [
-    'active' => 'Activo',
-    'paused' => 'Pausado',
-    'revoked' => 'Revocado'
-];
-
+// Helper functions for formatting (must be defined before use)
 function format_money(float $amount): string
 {
     return '$' . number_format($amount, 2);
 }
 
-function format_number(int $value): string
+function format_number(?int $value): string
 {
+    if ($value === null) {
+        return '0';
+    }
     return number_format($value, 0, ',', '.');
 }
 
@@ -208,6 +203,16 @@ function format_mb(float $value): string
 {
     return number_format($value, 2) . ' MB';
 }
+
+$stats = fetchIntegrationStats();
+$clients = fetchIntegrationClientsWithMetrics();
+$events = fetchRecentIntegrationEvents(8);
+
+$statusOptions = [
+    'active' => 'Activo',
+    'paused' => 'Pausado',
+    'revoked' => 'Revocado'
+];
 ?>
 <!DOCTYPE html>
 <html lang="es">

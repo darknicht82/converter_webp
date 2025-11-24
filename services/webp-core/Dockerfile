@@ -7,6 +7,7 @@ RUN apt-get update \
         libfreetype6-dev \
         libwebp-dev \
         libsqlite3-dev \
+        libpq-dev \
         pkg-config \
         libonig-dev \
         libzip-dev \
@@ -14,7 +15,7 @@ RUN apt-get update \
         unzip \
         git \
     && docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
-    && docker-php-ext-install gd pdo_sqlite bcmath \
+    && docker-php-ext-install gd pdo_sqlite pdo_pgsql bcmath \
     && a2enmod rewrite headers \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*

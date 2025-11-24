@@ -146,12 +146,23 @@
                     bulkProcessed += batch.length;
                     updateProgress();
 
+                    // Update Health Stats
+                    if (data.metrics) {
+                        $('#wcb-stat-memory').text(data.metrics.memory);
+                        $('#wcb-stat-time').text(data.metrics.time);
+                        $('#wcb-stat-status').text('Procesando...').css('color', 'blue');
+                    }
+
                     // Show detailed per-file information
                     if (data.details && data.details.length > 0) {
                         data.details.forEach(function (detail) {
                             const icon = detail.status === 'success' ? '✓' : '✗';
                             const type = detail.status === 'success' ? 'success' : 'error';
-                            logMessage(`${icon} ${detail.filename}`, type);
+                            let msg = `${icon} ${detail.filename}`;
+                            if (detail.error) {
+                                msg += ` <small>(${detail.error})</small>`;
+                            }
+                            logMessage(msg, type);
                         });
                     } else {
                         // Fallback to summary
@@ -159,6 +170,7 @@
                     }
                 } else {
                     logMessage('Error en lote: ' + (response.data.message || 'Desconocido'), 'error');
+                    $('#wcb-stat-status').text('Error en lote').css('color', 'red');
                     // Even if failed, we count as processed to move on
                     bulkProcessed += batch.length;
                     updateProgress();
@@ -191,10 +203,10 @@
             })
             .always(function () {
                 // Pause before next batch to prevent server overload
-                // Increased to 1000ms for MAMP/local environments
+                // Increased to 2000ms to prevent 502 Bad Gateway errors
                 setTimeout(function () {
                     processBatch();
-                }, 1000); // 1 second pause between images
+                }, 2000); // 2 seconds pause between images
             });
     }
 
@@ -254,6 +266,172 @@
         if (isProcessing) {
             return 'La conversión está en progreso. ¿Seguro que quieres salir?';
         }
+    });
+
+    // Tab Handling
+    $('.nav-tab-wrapper a').on('click', function (e) {
+        // If it's a real link (page reload), let it be
+        if ($(this).attr('href').indexOf('?page=') !== -1) {
+            return;
+        }
+        e.preventDefault();
+
+        // Internal tab switching (for sub-tabs like in File Manager)
+        $(this).addClass('nav-tab-active').siblings().removeClass('nav-tab-active');
+        const type = $(this).data('type');
+        if (type) {
+            loadFiles(type, 1);
+        }
+    });
+
+    // File Manager Logic
+    function loadFiles(type, page) {
+        const $tableBody = $('#wcb-files-list');
+        $tableBody.html('<tr><td colspan="5">Cargando...</td></tr>');
+
+        $.post(wcbAdmin.ajaxUrl, {
+            action: 'wcb_get_files',
+            nonce: wcbAdmin.fileNonce,
+            type: type,
+            paged: page
+        }, function (response) {
+            if (response.success) {
+                renderFilesTable(response.data.files, type);
+                renderPagination(response.data, type);
+            } else {
+                $tableBody.html('<tr><td colspan="5" style="color:red;">Error: ' + (response.data ? response.data.message : 'Desconocido') + '</td></tr>');
+            }
+        }).fail(function (xhr) {
+            $tableBody.html('<tr><td colspan="5" style="color:red;">Error de red: ' + xhr.status + ' ' + xhr.statusText + '</td></tr>');
+        });
+    }
+
+    function renderFilesTable(files, type) {
+        const $tableBody = $('#wcb-files-list');
+        $tableBody.empty();
+
+        if (files.length === 0) {
+            $tableBody.html('<tr><td colspan="5">No se encontraron archivos.</td></tr>');
+            return;
+        }
+
+        files.forEach(function (file) {
+            let actions = '';
+            if (type === 'webp') {
+                actions = `<button class="button button-small wcb-delete-file" data-id="${file.id}">Borrar</button>`;
+            } else {
+                actions = `<button class="button button-small wcb-restore-backup" data-id="${file.id}">Restaurar</button> 
+                           <button class="button button-small wcb-delete-backup" data-id="${file.id}" style="color: #a00;">Borrar Backup</button>`;
+            }
+
+            const row = `
+                <tr>
+                    <td><img src="${file.thumbnail}" width="50" height="50" style="object-fit:cover;"></td>
+                    <td>
+                        <strong>${file.filename}</strong><br>
+                        <a href="${file.url}" target="_blank">Ver archivo</a>
+                    </td>
+                    <td>${file.size}</td>
+                    <td>${file.date}</td>
+                    <td>${actions}</td>
+                </tr>
+            `;
+            $tableBody.append(row);
+        });
+    }
+
+    function renderPagination(data, type) {
+        const $pagination = $('.pagination-links');
+        $pagination.empty();
+
+        if (data.pages <= 1) return;
+
+        if (data.current_page > 1) {
+            $pagination.append(`<a class="button" href="#" onclick="loadFiles('${type}', ${data.current_page - 1}); return false;">&laquo; Anterior</a> `);
+        }
+
+        $pagination.append(`<span>Página ${data.current_page} de ${data.pages}</span> `);
+
+        if (data.current_page < data.pages) {
+            $pagination.append(`<a class="button" href="#" onclick="loadFiles('${type}', ${data.current_page + 1}); return false;">Siguiente &raquo;</a>`);
+        }
+
+        // Expose loadFiles globally for pagination clicks
+        window.loadFiles = loadFiles;
+    }
+
+    // Action Handlers
+    $(document).on('click', '.wcb-restore-backup', function () {
+        if (!confirm('¿Estás seguro de restaurar el archivo original? Esto reemplazará la versión WebP.')) return;
+
+        const id = $(this).data('id');
+        const $btn = $(this);
+        $btn.prop('disabled', true).text('Restaurando...');
+
+        $.post(wcbAdmin.ajaxUrl, {
+            action: 'wcb_restore_backup',
+            nonce: wcbAdmin.fileNonce,
+            id: id
+        }, function (response) {
+            if (response.success) {
+                alert(response.data.message);
+                loadFiles('backup', 1); // Reload list
+            } else {
+                alert('Error: ' + response.data.message);
+                $btn.prop('disabled', false).text('Restaurar');
+            }
+        }).fail(function (xhr) {
+            alert('Error de red: ' + xhr.status + ' ' + xhr.statusText);
+            $btn.prop('disabled', false).text('Restaurar');
+        });
+    });
+
+    $(document).on('click', '.wcb-delete-backup', function () {
+        if (!confirm('¿Estás seguro de eliminar el backup? Esta acción es irreversible.')) return;
+
+        const id = $(this).data('id');
+        const $btn = $(this);
+        $btn.prop('disabled', true).text('Borrando...');
+
+        $.post(wcbAdmin.ajaxUrl, {
+            action: 'wcb_delete_backup',
+            nonce: wcbAdmin.fileNonce,
+            id: id
+        }, function (response) {
+            if (response.success) {
+                loadFiles('backup', 1);
+            } else {
+                alert('Error: ' + response.data.message);
+                $btn.prop('disabled', false).text('Borrar Backup');
+            }
+        }).fail(function (xhr) {
+            alert('Error de red: ' + xhr.status + ' ' + xhr.statusText);
+            $btn.prop('disabled', false).text('Borrar Backup');
+        });
+    });
+
+    $(document).on('click', '.wcb-delete-file', function () {
+        if (!confirm('¿Estás seguro de eliminar este archivo? Se borrará de la biblioteca de medios.')) return;
+
+        const id = $(this).data('id');
+        const $btn = $(this);
+        $btn.prop('disabled', true).text('Borrando...');
+
+        $.post(wcbAdmin.ajaxUrl, {
+            action: 'wcb_delete_file',
+            nonce: wcbAdmin.fileNonce,
+            id: id
+        }, function (response) {
+            if (response.success) {
+                loadFiles('webp', 1);
+            } else {
+                alert('Error: ' + response.data.message);
+                $btn.prop('disabled', false).text('Borrar');
+            }
+        }).fail(function (xhr) {
+            alert('Error de red: ' + xhr.status + ' ' + xhr.statusText);
+            $btn.prop('disabled', false).text('Borrar');
+        });
     });
 
 })(jQuery);

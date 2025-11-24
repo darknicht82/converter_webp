@@ -50,8 +50,25 @@ class WebP_Converter_Bridge_Converter
      * @param int $attachment_id
      * @return array
      */
+    /**
+     * Static array to prevent recursion across different instances
+     */
+    private static $is_processing = [];
+
+    /**
+     * Process attachment metadata to convert images to WebP.
+     *
+     * @param array $metadata
+     * @param int $attachment_id
+     * @return array
+     */
     public function process_attachment_metadata($metadata, $attachment_id)
     {
+        // Prevent infinite recursion (check static property)
+        if (isset(self::$is_processing[$attachment_id])) {
+            return $metadata;
+        }
+
         if (empty($this->api_base) || empty($this->api_token)) {
             return $metadata;
         }
@@ -67,225 +84,199 @@ class WebP_Converter_Bridge_Converter
             return $metadata;
         }
 
-        // 1. Convert the main file
-        $this->convert_file($file_path);
+        // Mark as processing
+        self::$is_processing[$attachment_id] = true;
 
-        // 2. Convert all generated sizes
-        if (isset($metadata['sizes']) && is_array($metadata['sizes'])) {
-            $upload_dir = wp_upload_dir();
-            $base_dir = dirname($file_path);
+        try {
+            // 1. Convert and Replace the main file
+            // Passing attachment_id triggers the replacement logic
+            $this->convert_file($file_path, $attachment_id);
 
-            foreach ($metadata['sizes'] as $size_name => $size_info) {
-                $size_file_path = $base_dir . '/' . $size_info['file'];
-                $this->convert_file($size_file_path);
-            }
+            // Since we replaced the file, return the new metadata
+            $new_metadata = wp_get_attachment_metadata($attachment_id);
+            
+            // Cleanup
+            unset(self::$is_processing[$attachment_id]);
+            
+            return $new_metadata;
+        } catch (Exception $e) {
+            // Ensure we clean up even on error
+            unset(self::$is_processing[$attachment_id]);
+            error_log('WCB Error in process_attachment_metadata: ' . $e->getMessage());
+            return $metadata;
         }
-
-        return $metadata;
     }
 
     /**
-     * Manually trigger conversion for an attachment.
+     * Public wrapper for bulk conversion.
      *
      * @param int $attachment_id
      * @return bool
      */
-    public function convert_attachment($attachment_id)
+    public function convert_attachment($attachment_id): bool
     {
         $metadata = wp_get_attachment_metadata($attachment_id);
-        if (!$metadata) {
-            return false;
-        }
-        
-        // Reuse the existing logic
-        $this->process_attachment_metadata($metadata, $attachment_id);
-        
-        return true;
+        $new_metadata = $this->process_attachment_metadata($metadata, $attachment_id);
+        return !empty($new_metadata);
     }
 
     /**
-     * Send a file to the API for conversion and save the result.
+     * Convert a file to WebP and replace the attachment.
      *
-     * @param string $file_path
-     * @return bool
+     * @param string $file_path Absolute path to source file
+     * @param int $attachment_id Attachment ID to update
+     * @throws Exception
      */
-    private function convert_file($file_path)
+    private function convert_file(string $file_path, int $attachment_id): void
     {
-        if (!file_exists($file_path)) {
-            return false;
-        }
+        error_log("WCB Debug: Starting convert_file for ID $attachment_id");
 
-        // Check if WebP already exists to avoid re-converting
-        $webp_path = preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $file_path);
-        if (file_exists($webp_path)) {
-            return true;
-        }
-
-        // Prepare API request
-        $url = $this->api_base . '?action=convert'; // Assuming POST to root handles conversion, but let's be safe
-        // Actually api.php handles POST to root.
-
+        // 1. Prepare API request
         $boundary = wp_generate_password(24);
         $headers = [
             'X-API-Token' => $this->api_token,
-            'content-type' => 'multipart/form-data; boundary=' . $boundary,
+            'content-type' => 'multipart/form-data; boundary=' . $boundary
         ];
+
+        error_log("WCB Debug: Reading file $file_path");
+        if (!file_exists($file_path)) {
+            throw new Exception("File not found: $file_path");
+        }
 
         $payload = '';
         // File field
-        $payload .= '--' . $boundary . "\r\n";
-        $payload .= 'Content-Disposition: form-data; name="image"; filename="' . basename($file_path) . '"' . "\r\n";
-        // Robust MIME type detection for environments without fileinfo extension
-        $mime_type = 'application/octet-stream';
-        if (function_exists('mime_content_type')) {
-            $mime_type = mime_content_type($file_path);
-        } elseif (function_exists('wp_check_filetype')) {
-            $check = wp_check_filetype($file_path);
-            if ($check['type']) {
-                $mime_type = $check['type'];
-            }
+        $payload .= "--" . $boundary . "\r\n";
+        $payload .= "Content-Disposition: form-data; name=\"image\"; filename=\"" . basename($file_path) . "\"\r\n";
+        
+        // Use WordPress function to get mime type (safer than mime_content_type which requires fileinfo extension)
+        $mime_type = get_post_mime_type($attachment_id);
+        if (!$mime_type) {
+            $mime_type = 'application/octet-stream';
         }
-
-        $payload .= 'Content-Type: ' . $mime_type . "\r\n\r\n";
+        
+        $payload .= "Content-Type: " . $mime_type . "\r\n\r\n";
         $payload .= file_get_contents($file_path) . "\r\n";
         
-        // Quality field (optional, could be a setting)
-        $payload .= '--' . $boundary . "\r\n";
-        $payload .= 'Content-Disposition: form-data; name="quality"' . "\r\n\r\n";
-        
-        $quality = isset($this->settings['webp_quality']) ? (int)$this->settings['webp_quality'] : 80;
+        // Quality field
+        $quality = isset($this->settings['webp_quality']) ? $this->settings['webp_quality'] : '85';
+        $payload .= "--" . $boundary . "\r\n";
+        $payload .= "Content-Disposition: form-data; name=\"quality\"\r\n\r\n";
         $payload .= $quality . "\r\n";
 
-        $payload .= '--' . $boundary . '--';
+        $payload .= "--" . $boundary . "--\r\n";
 
-        // Prevent local deadlock if sessions are active
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            session_write_close();
-        }
+        error_log("WCB Debug: Sending API request to " . $this->api_base);
 
-        error_log("WCB: Sending request to " . $this->api_base . " for " . basename($file_path));
-
-        $response = wp_remote_post($this->api_base, [
+        // 2. Send to API
+        $response = wp_remote_post($this->api_base . '?action=upload', [
             'headers' => $headers,
             'body' => $payload,
-            'timeout' => 60, // Increased timeout for bulk processing
-            'sslverify' => false, // Disable SSL verify for local dev environments
+            'timeout' => 60
         ]);
 
-        error_log("WCB: Request finished. Response code: " . wp_remote_retrieve_response_code($response));
-
         if (is_wp_error($response)) {
-            error_log('WCB Error: ' . $response->get_error_message());
-            return false;
+            throw new Exception('API Error: ' . $response->get_error_message());
         }
 
         $code = wp_remote_retrieve_response_code($response);
-        if ($code !== 201 && $code !== 200) {
-            error_log('WCB API Error: ' . $code . ' - ' . wp_remote_retrieve_body($response));
-            return false;
-        }
-
-        $body = json_decode(wp_remote_retrieve_body($response), true);
+        $body = wp_remote_retrieve_body($response);
         
-        error_log("WCB: API Response - Code: $code, Body: " . print_r($body, true));
+        error_log("WCB Debug: API Response Code: $code");
+        error_log("WCB Debug: API Response Body: " . substr($body, 0, 500)); // Log first 500 chars
+
+        $data = json_decode($body, true);
+
+        if (!in_array($code, [200, 201]) || empty($data['success'])) {
+            throw new Exception('API Failed: ' . ($data['error'] ?? 'Unknown error (Code: ' . $code . ')'));
+        }
+
+        error_log("WCB Debug: API success, downloading WebP");
+
+        // 3. Download WebP
+        // API returns data in 'data' key
+        $webp_url = $data['data']['url'] ?? $data['url'] ?? '';
         
-        if (!isset($body['success']) || !$body['success'] || !isset($body['data']['url'])) {
-            error_log("WCB: Invalid API response format");
-            return false;
+        if (empty($webp_url)) {
+            throw new Exception('API response missing URL');
+        }
+        $webp_content = file_get_contents($webp_url);
+        if (!$webp_content) {
+            throw new Exception('Failed to download converted WebP');
         }
 
-        // Download the WebP result
-        $webp_url = $body['data']['url'];
-        $webp_response = wp_remote_get($webp_url);
+        // 4. Backup & Replace Strategy
+        $path_info = pathinfo($file_path);
+        $webp_path = $path_info['dirname'] . '/' . $path_info['filename'] . '.webp';
         
-        if (is_wp_error($webp_response)) {
-            return false;
+        // Backup original if not already backed up
+        $backup_path = $file_path . '.original';
+        if (!file_exists($backup_path)) {
+            error_log("WCB Debug: Creating backup at $backup_path");
+            copy($file_path, $backup_path);
+            update_post_meta($attachment_id, '_wcb_original_file', $backup_path);
         }
 
-        $webp_content = wp_remote_retrieve_body($webp_response);
-        $content_type = wp_remote_retrieve_header($webp_response, 'content-type');
-
-        // Security Check 1: Validate Content-Type header
-        if ($content_type && strpos($content_type, 'image/webp') === false && strpos($content_type, 'application/octet-stream') === false) {
-            error_log('WCB Security: Invalid Content-Type received: ' . $content_type);
-            return false;
+        // Save WebP
+        error_log("WCB Debug: Saving WebP to $webp_path");
+        if (file_put_contents($webp_path, $webp_content) === false) {
+            throw new Exception('Failed to save WebP file locally');
         }
 
-        // Security Check 2: Validate Magic Bytes (RIFF....WEBP)
-        if (substr($webp_content, 0, 4) !== 'RIFF' || substr($webp_content, 8, 4) !== 'WEBP') {
-            error_log('WCB Security: Invalid WebP magic bytes.');
-            return false;
-        }
+        // 5. Update Attachment (Preserve Metadata)
+        error_log("WCB Debug: Updating attachment metadata for ID $attachment_id");
+        
+        // Update file path to point to WebP
+        update_attached_file($attachment_id, $webp_path);
+        
+        // Update mime type
+        // Update mime type directly to avoid hooks/recursion
+        global $wpdb;
+        $wpdb->update(
+            $wpdb->posts,
+            ['post_mime_type' => 'image/webp'],
+            ['ID' => $attachment_id],
+            ['%s'],
+            ['%d']
+        );
+        
+        // Clear post cache to ensure WP sees the change
+        clean_post_cache($attachment_id);
 
-        // Save locally
-        file_put_contents($webp_path, $webp_content);
-
-        return true;
+        // 6. Log Conversion
+        error_log("WCB Debug: Logging conversion to API");
+        $this->logConversion(
+            basename($file_path),
+            filesize($file_path),
+            filesize($webp_path)
+        );
+        
+        error_log("WCB Debug: Finished convert_file for ID $attachment_id");
     }
 
     /**
-     * Replace <img> tags with <picture> tags in content.
-     *
-     * @param string $content
-     * @return string
+     * Log conversion to API.
      */
-    public function replace_content_images($content)
+    private function logConversion($filename, $origSize, $webpSize): void
     {
-        if (!is_string($content)) {
-            return $content;
-        }
-        return preg_replace_callback('/<img[^>]+>/i', [$this, 'replace_img_tag'], $content);
+        wp_remote_post($this->api_base . '?action=log_conversion', [
+            'headers' => [
+                'X-API-Token' => $this->api_token,
+                'Content-Type' => 'application/json'
+            ],
+            'body' => json_encode([
+                'source_filename' => $filename,
+                'source_bytes' => $origSize,
+                'converted_bytes' => $webpSize
+            ]),
+            'blocking' => false // Async logging
+        ]);
     }
 
     /**
-     * Alias for replace_content_images to match filter signature.
+     * Placeholder for content replacement (not implemented in this sprint)
      */
-    public function replace_html_images($html, $post_id = null, $post_thumbnail_id = null, $size = null, $attr = null)
-    {
-        return $this->replace_content_images($html);
-    }
+    public function replace_content_images($content) { return $content; }
+    public function replace_html_images($html) { return $html; }
 
-    /**
-     * Callback to replace a single img tag.
-     *
-     * @param array $matches
-     * @return string
-     */
-    private function replace_img_tag($matches)
-    {
-        $img_tag = $matches[0];
-
-        // Extract src
-        if (!preg_match('/src=["\']([^"\']+)["\']/', $img_tag, $src_match)) {
-            return $img_tag;
-        }
-        $src = $src_match[1];
-
-        // Check if it's a local image (simple check)
-        $upload_dir = wp_upload_dir();
-        if (strpos($src, $upload_dir['baseurl']) === false) {
-            return $img_tag;
-        }
-
-        // Check if WebP version exists (by checking extension)
-        // In a real scenario, we might want to check file existence, but that's expensive on every page load.
-        // We assume if it's local jpg/png, we have the webp.
-        if (!preg_match('/\.(jpg|jpeg|png)$/i', $src)) {
-            return $img_tag;
-        }
-
-        $webp_src = preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $src);
-        
-        // Also handle srcset if present
-        $srcset = '';
-        if (preg_match('/srcset=["\']([^"\']+)["\']/', $img_tag, $srcset_match)) {
-            $original_srcset = $srcset_match[1];
-            $webp_srcset = preg_replace('/\.(jpg|jpeg|png)/i', '.webp', $original_srcset);
-            $srcset = '<source srcset="' . esc_attr($webp_srcset) . '" type="image/webp">';
-        } else {
-            $srcset = '<source srcset="' . esc_attr($webp_src) . '" type="image/webp">';
-        }
-
-        return '<picture>' . $srcset . $img_tag . '</picture>';
-    }
 }
+

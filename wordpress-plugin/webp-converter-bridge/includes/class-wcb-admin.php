@@ -31,6 +31,10 @@ class WebP_Converter_Bridge_Admin
         add_action('wp_ajax_wcb_rewrite_rules', [$this, 'ajax_rewrite_rules']);
         add_action('wp_ajax_wcb_scan_images', [$this, 'ajax_scan_images']);
         add_action('wp_ajax_wcb_bulk_convert', [$this, 'ajax_bulk_convert']);
+        add_action('wp_ajax_wcb_get_files', [$this, 'ajax_get_files']);
+        add_action('wp_ajax_wcb_restore_backup', [$this, 'ajax_restore_backup']);
+        add_action('wp_ajax_wcb_delete_backup', [$this, 'ajax_delete_backup']);
+        add_action('wp_ajax_wcb_delete_file', [$this, 'ajax_delete_file']);
     }
 
     /**
@@ -202,13 +206,14 @@ class WebP_Converter_Bridge_Admin
             'wcb-admin',
             WCB_PLUGIN_URL . 'assets/admin.js',
             ['jquery'],
-            '1.0.6',
+            WCB_PLUGIN_VERSION,
             true
         );
 
         wp_localize_script('wcb-admin', 'wcbAdmin', [
             'ajaxUrl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('wcb_test_connection')
+            'nonce' => wp_create_nonce('wcb_test_connection'),
+            'fileNonce' => wp_create_nonce('wcb_file_manager')
         ]);
 
         wp_localize_script('wcb-admin', 'wcbRewrite', [
@@ -234,7 +239,7 @@ class WebP_Converter_Bridge_Admin
             'api_token' => WCB_DEFAULT_API_TOKEN,
             'cost_per_image' => '0.00',
             'delivery_method' => 'picture',
-            'webp_quality' => '80'
+            'webp_quality' => '85'
         ];
 
         $settings = get_option(self::OPTION_NAME, $defaults);
@@ -305,9 +310,14 @@ class WebP_Converter_Bridge_Admin
             ? esc_url_raw($settings['api_base'])
             : WCB_DEFAULT_API_BASE;
 
-        $settings['api_token'] = isset($settings['api_token'])
-            ? sanitize_text_field($settings['api_token'])
-            : WCB_DEFAULT_API_TOKEN;
+        // Sanitize token - allow empty, don't use placeholder as fallback
+        if (isset($settings['api_token'])) {
+            $token = sanitize_text_field($settings['api_token']);
+            // If token is the placeholder, treat it as empty
+            $settings['api_token'] = ($token === '{{API_TOKEN}}') ? '' : $token;
+        } else {
+            $settings['api_token'] = '';
+        }
 
         $settings['cost_per_image'] = isset($settings['cost_per_image'])
             ? number_format((float)$settings['cost_per_image'], 2, '.', '')
@@ -317,7 +327,7 @@ class WebP_Converter_Bridge_Admin
             ? $settings['delivery_method']
             : 'picture';
 
-        $quality = isset($settings['webp_quality']) ? (int)$settings['webp_quality'] : 80;
+        $quality = isset($settings['webp_quality']) ? (int)$settings['webp_quality'] : 85;
         $settings['webp_quality'] = max(1, min(100, $quality));
 
         $settings['force_limits'] = isset($settings['force_limits']) ? '1' : '0';
@@ -349,7 +359,7 @@ class WebP_Converter_Bridge_Admin
     {
         $settings = $this->get_settings();
         printf(
-            '<input type="text" id="wcb_api_token" name="%1$s[api_token]" value="%2$s" class="regular-text code" autocomplete="off" required />',
+            '<input type="text" id="wcb_api_token" name="%1$s[api_token]" value="%2$s" class="regular-text code" autocomplete="off" placeholder="Ingresa tu token de API" />',
             esc_attr(self::OPTION_NAME),
             esc_attr($settings['api_token'])
         );
@@ -373,21 +383,6 @@ class WebP_Converter_Bridge_Admin
         echo '<p class="description">' . esc_html__('Define la calidad de compresión. 80 es un buen balance entre calidad y peso.', 'webp-converter-bridge') . '</p>';
     }
 
-    /**
-     * Campo costo por imagen.
-     *
-     * @return void
-     */
-    public function render_cost_field(): void
-    {
-        $settings = $this->get_settings();
-        printf(
-            '<input type="number" step="0.01" min="0" id="wcb_cost_per_image" name="%1$s[cost_per_image]" value="%2$s" class="small-text" readonly style="background-color: #f0f0f1; cursor: not-allowed;" />',
-            esc_attr(self::OPTION_NAME),
-            esc_attr($settings['cost_per_image'])
-        );
-        echo '<p class="description">' . esc_html__('Este valor se actualiza automáticamente al probar la conexión.', 'webp-converter-bridge') . '</p>';
-    }
 
     /**
      * Campo método de entrega.
@@ -479,104 +474,219 @@ AddType image/webp .webp
     }
 
     /**
-     * Renderiza la página de ajustes.
+     * Campo costo por imagen.
      *
      * @return void
      */
-    public function render_settings_page(): void
+    public function render_cost_field(): void
     {
         $settings = $this->get_settings();
+        $cost = $settings['cost_per_image'] ?? '0.00';
+        printf(
+            '<input type="text" id="wcb_cost_per_image" name="%1$s[cost_per_image]" value="%2$s" class="small-text" readonly />',
+            esc_attr(self::OPTION_NAME),
+            esc_attr($cost)
+        );
+        echo '<p class="description">' . esc_html__('Este valor se actualiza automáticamente al probar la conexión.', 'webp-converter-bridge') . '</p>';
+    }
+
+    /**
+     * Renderiza la página principal del plugin con pestañas.
+     */
+    public function render_settings_page(): void
+    {
+        $active_tab = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'dashboard';
         ?>
         <div class="wrap wcb-admin">
-            <h1><?php esc_html_e('Conversor WebP – Integración', 'webp-converter-bridge'); ?></h1>
-            <?php settings_errors(); ?>
-            <p class="subtitle"><?php esc_html_e('Configura el puente entre tu sitio y el servicio WebP.', 'webp-converter-bridge'); ?></p>
-
-            <div class="wcb-panels">
-                <div class="wcb-panel">
-                    <h2><?php esc_html_e('Ajustes de conexión', 'webp-converter-bridge'); ?></h2>
-                    <form method="post" action="options.php">
-                        <?php
-                        settings_fields(self::OPTION_GROUP);
-                        do_settings_sections(self::OPTION_NAME);
-                        submit_button(__('Guardar ajustes', 'webp-converter-bridge'));
-                        ?>
-                    </form>
-                </div>
-
-                <div class="wcb-panel">
-                    <h2><?php esc_html_e('Prueba rápida', 'webp-converter-bridge'); ?></h2>
-                    <p><?php esc_html_e('Verifica que el servicio WebP esté disponible y acepte tu token.', 'webp-converter-bridge'); ?></p>
-                    <button type="button" class="button button-primary" id="wcb-test-connection">
-                        <?php esc_html_e('Probar conexión', 'webp-converter-bridge'); ?>
-                    </button>
-                    <div id="wcb-test-result" class="wcb-test-result" aria-live="polite"></div>
-
-                    <hr />
-                    <h3><?php esc_html_e('Configuración actual', 'webp-converter-bridge'); ?></h3>
-                    <ul class="wcb-config-list">
-                        <li><strong><?php esc_html_e('Servicio:', 'webp-converter-bridge'); ?></strong> <?php echo esc_html($settings['api_base']); ?></li>
-                        <li><strong><?php esc_html_e('Token:', 'webp-converter-bridge'); ?></strong> <code><?php echo esc_html($settings['api_token']); ?></code></li>
-                        <li><strong><?php esc_html_e('Costo por imagen:', 'webp-converter-bridge'); ?></strong> <?php echo esc_html($settings['cost_per_image']); ?> USD</li>
-                    </ul>
-                </div>
-            </div>
-
-            <div class="wcb-panel wcb-bulk-panel" style="margin-top: 20px;">
-                <h2><?php esc_html_e('Conversión Masiva', 'webp-converter-bridge'); ?></h2>
-                <p><?php esc_html_e('Escanea tu biblioteca de medios y convierte las imágenes existentes a WebP.', 'webp-converter-bridge'); ?></p>
-                
-                <div class="wcb-bulk-controls">
-                    <button type="button" class="button" id="wcb-scan-images">
-                        <?php esc_html_e('Escanear Imágenes', 'webp-converter-bridge'); ?>
-                    </button>
-                    <span id="wcb-scan-status" style="margin-left: 10px; font-weight: bold;"></span>
-                </div>
-
-                <div id="wcb-bulk-progress-area" style="display: none; margin-top: 15px;">
-                    <div class="wcb-progress-bar-wrapper" style="background: #f0f0f1; border-radius: 4px; height: 20px; overflow: hidden; border: 1px solid #c3c4c7;">
-                        <div id="wcb-progress-bar" style="background: #2271b1; height: 100%; width: 0%; transition: width 0.3s;"></div>
-                    </div>
-                    <p>
-                        <span id="wcb-progress-text">0%</span> 
-                        (<span id="wcb-progress-count">0/0</span>)
-                    </p>
-                    <button type="button" class="button button-primary" id="wcb-start-bulk">
-                        <?php esc_html_e('Iniciar Conversión', 'webp-converter-bridge'); ?>
-                    </button>
-                    <button type="button" class="button" id="wcb-stop-bulk" disabled>
-                        <?php esc_html_e('Detener', 'webp-converter-bridge'); ?>
-                    </button>
-            </div>
+            <h1><?php esc_html_e('WebP Converter Bridge', 'webp-converter-bridge'); ?></h1>
             
-            <div id="wcb-bulk-log" style="margin-top: 15px; max-height: 150px; overflow-y: auto; background: #fff; border: 1px solid #ddd; padding: 10px; display: none;"></div>
-        </div>
+            <h2 class="nav-tab-wrapper">
+                <a href="?page=webp-converter-bridge&tab=dashboard" class="nav-tab <?php echo $active_tab == 'dashboard' ? 'nav-tab-active' : ''; ?>">
+                    <?php esc_html_e('Dashboard', 'webp-converter-bridge'); ?>
+                </a>
+                <a href="?page=webp-converter-bridge&tab=conversion" class="nav-tab <?php echo $active_tab == 'conversion' ? 'nav-tab-active' : ''; ?>">
+                    <?php esc_html_e('Conversión', 'webp-converter-bridge'); ?>
+                </a>
+                <a href="?page=webp-converter-bridge&tab=files" class="nav-tab <?php echo $active_tab == 'files' ? 'nav-tab-active' : ''; ?>">
+                    <?php esc_html_e('Gestor de Archivos', 'webp-converter-bridge'); ?>
+                </a>
+                <a href="?page=webp-converter-bridge&tab=settings" class="nav-tab <?php echo $active_tab == 'settings' ? 'nav-tab-active' : ''; ?>">
+                    <?php esc_html_e('Configuración', 'webp-converter-bridge'); ?>
+                </a>
+            </h2>
 
-        <div class="wcb-panel wcb-info-panel" style="margin-top: 20px;">
-            <h2><?php esc_html_e('Información del Plugin', 'webp-converter-bridge'); ?></h2>
-            <p><strong><?php esc_html_e('Versión Instalada:', 'webp-converter-bridge'); ?></strong> <?php echo esc_html(WCB_PLUGIN_VERSION); ?></p>
-            
-            <h3><?php esc_html_e('Registro de Cambios (Changelog)', 'webp-converter-bridge'); ?></h3>
-            <div style="background: #fff; padding: 15px; border: 1px solid #ccd0d4; max-height: 300px; overflow-y: auto;">
+            <div class="wcb-tab-content">
                 <?php
-                $readme_path = WCB_PLUGIN_DIR . 'readme.txt';
-                if (file_exists($readme_path)) {
-                    $readme_content = file_get_contents($readme_path);
-                    // Extract Changelog section
-                    if (preg_match('/== Changelog ==(.*?)$/s', $readme_content, $matches)) {
-                        echo nl2br(esc_html(trim($matches[1])));
-                    } else {
-                        esc_html_e('No se pudo leer el changelog.', 'webp-converter-bridge');
-                    }
-                } else {
-                    esc_html_e('Archivo readme.txt no encontrado.', 'webp-converter-bridge');
+                switch ($active_tab) {
+                    case 'conversion':
+                        $this->render_tab_conversion();
+                        break;
+                    case 'files':
+                        $this->render_tab_files();
+                        break;
+                    case 'settings':
+                        $this->render_tab_settings();
+                        break;
+                    case 'dashboard':
+                    default:
+                        $this->render_tab_dashboard();
+                        break;
                 }
                 ?>
             </div>
         </div>
-    </div>
-    <?php
-}
+        <?php
+    }
+
+    private function render_tab_dashboard(): void {
+        echo '<div class="wcb-panel"><h2>Resumen General</h2><p>Próximamente: Gráficos y estadísticas.</p></div>';
+    }
+
+    private function render_tab_conversion(): void {
+        ?>
+        <div class="wcb-panel wcb-bulk-panel">
+            <h2><?php esc_html_e('Conversión Masiva', 'webp-converter-bridge'); ?></h2>
+            <p><?php esc_html_e('Escanea tu biblioteca de medios y convierte las imágenes existentes a WebP.', 'webp-converter-bridge'); ?></p>
+            
+            <div class="wcb-bulk-controls">
+                <button type="button" class="button" id="wcb-scan-images">
+                    <?php esc_html_e('Escanear Imágenes', 'webp-converter-bridge'); ?>
+                </button>
+                <span id="wcb-scan-status" style="margin-left: 10px; font-weight: bold;"></span>
+            </div>
+
+            <div id="wcb-bulk-progress-area" style="display: none; margin-top: 15px;">
+                <div class="wcb-progress-bar-wrapper" style="background: #f0f0f1; border-radius: 4px; height: 20px; overflow: hidden; border: 1px solid #c3c4c7;">
+                    <div id="wcb-progress-bar" style="background: #2271b1; height: 100%; width: 0%; transition: width 0.3s;"></div>
+                </div>
+                <p>
+                    <span id="wcb-progress-text">0%</span> 
+                    (<span id="wcb-progress-count">0/0</span>)
+                </p>
+                <button type="button" class="button button-primary" id="wcb-start-bulk">
+                    <?php esc_html_e('Iniciar Conversión', 'webp-converter-bridge'); ?>
+                </button>
+                <button type="button" class="button" id="wcb-stop-bulk" disabled>
+                    <?php esc_html_e('Detener', 'webp-converter-bridge'); ?>
+                </button>
+                
+                <!-- Health Stats -->
+                <div id="wcb-health-stats" style="margin-top: 15px; display: flex; gap: 20px; font-size: 13px; background: #fff; padding: 10px; border: 1px solid #ddd;">
+                    <div><strong>Memoria:</strong> <span id="wcb-stat-memory">-</span></div>
+                    <div><strong>Tiempo Lote:</strong> <span id="wcb-stat-time">-</span></div>
+                    <div><strong>Estado:</strong> <span id="wcb-stat-status" style="color: green;">Esperando...</span></div>
+                </div>
+            </div>
+            
+            <div id="wcb-bulk-log" style="margin-top: 15px; max-height: 150px; overflow-y: auto; background: #fff; border: 1px solid #ddd; padding: 10px; display: none;"></div>
+        </div>
+        <?php
+    }
+
+    private function render_tab_files(): void {
+        ?>
+        <div class="wcb-panel">
+            <h2 class="nav-tab-wrapper" style="margin-bottom: 20px;">
+                <a href="#" class="nav-tab nav-tab-active" data-type="webp"><?php esc_html_e('Imágenes WebP', 'webp-converter-bridge'); ?></a>
+                <a href="#" class="nav-tab" data-type="backup"><?php esc_html_e('Backups (.original)', 'webp-converter-bridge'); ?></a>
+            </h2>
+
+            <div id="wcb-files-table-container">
+                <table class="wp-list-table widefat fixed striped">
+                    <thead>
+                        <tr>
+                            <th width="80"><?php esc_html_e('Vista', 'webp-converter-bridge'); ?></th>
+                            <th><?php esc_html_e('Archivo', 'webp-converter-bridge'); ?></th>
+                            <th><?php esc_html_e('Tamaño', 'webp-converter-bridge'); ?></th>
+                            <th><?php esc_html_e('Fecha', 'webp-converter-bridge'); ?></th>
+                            <th><?php esc_html_e('Acciones', 'webp-converter-bridge'); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody id="wcb-files-list">
+                        <tr><td colspan="5"><?php esc_html_e('Cargando...', 'webp-converter-bridge'); ?></td></tr>
+                    </tbody>
+                </table>
+                
+                <div class="tablenav bottom">
+                    <div class="tablenav-pages">
+                        <span class="pagination-links"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+
+    private function render_tab_settings(): void {
+        $settings = $this->get_settings();
+        ?>
+        <form method="post" action="options.php">
+            <?php settings_fields(self::OPTION_GROUP); ?>
+            
+            <div class="wcb-panels">
+                <!-- Panel 1: System Status -->
+                <div class="wcb-panel">
+                    <h2><?php esc_html_e('Estado del Sistema', 'webp-converter-bridge'); ?></h2>
+                    <?php 
+                    $this->render_system_section(); 
+                    do_settings_fields(self::OPTION_NAME, 'wcb_section_system');
+                    ?>
+                </div>
+
+                <!-- Panel 2: Connection -->
+                <div class="wcb-panel">
+                    <h2><?php esc_html_e('Conexión API', 'webp-converter-bridge'); ?></h2>
+                    <p><?php esc_html_e('Configura la URL del servicio y el token proporcionado.', 'webp-converter-bridge'); ?></p>
+                    <table class="form-table" role="presentation">
+                        <?php do_settings_fields(self::OPTION_NAME, 'wcb_section_connection'); ?>
+                    </table>
+                    
+                    <div style="margin-top: 20px; padding: 15px; background: #f0f0f1; border: 1px solid #ccc; border-radius: 4px;">
+                        <h3><?php esc_html_e('Prueba de Conexión', 'webp-converter-bridge'); ?></h3>
+                        <p><?php esc_html_e('Verifica que la URL y el Token sean correctos antes de guardar.', 'webp-converter-bridge'); ?></p>
+                        <button type="button" class="button button-secondary" id="wcb-test-connection">
+                            <?php esc_html_e('Probar conexión ahora', 'webp-converter-bridge'); ?>
+                        </button>
+                        <div id="wcb-test-result" class="wcb-test-result" aria-live="polite" style="margin-top: 10px;"></div>
+                    </div>
+                </div>
+
+                <!-- Panel 3: Conversion & Cost -->
+                <div class="wcb-panel">
+                    <h2><?php esc_html_e('Conversión y Costos', 'webp-converter-bridge'); ?></h2>
+                    
+                    <h3><?php esc_html_e('Configuración', 'webp-converter-bridge'); ?></h3>
+                    <p><?php esc_html_e('Ajustes de calidad y procesamiento de imágenes.', 'webp-converter-bridge'); ?></p>
+                    <table class="form-table" role="presentation">
+                        <?php do_settings_fields(self::OPTION_NAME, 'wcb_section_conversion'); ?>
+                    </table>
+                    
+                    <hr>
+                    
+                    <h3><?php esc_html_e('Costos', 'webp-converter-bridge'); ?></h3>
+                    <p><?php esc_html_e('Define el costo unitario por imagen para reportes y facturación.', 'webp-converter-bridge'); ?></p>
+                    <table class="form-table" role="presentation">
+                        <?php do_settings_fields(self::OPTION_NAME, 'wcb_section_cost'); ?>
+                    </table>
+                </div>
+
+                <!-- Panel 4: Delivery -->
+                <div class="wcb-panel">
+                    <h2><?php esc_html_e('Entrega de Imágenes', 'webp-converter-bridge'); ?></h2>
+                    <p><?php esc_html_e('Cómo se servirán las imágenes WebP a los visitantes.', 'webp-converter-bridge'); ?></p>
+                    <table class="form-table" role="presentation">
+                        <?php do_settings_fields(self::OPTION_NAME, 'wcb_section_delivery'); ?>
+                    </table>
+                </div>
+            </div>
+
+            <div style="margin-top: 20px;">
+                <?php submit_button(__('Guardar todos los ajustes', 'webp-converter-bridge')); ?>
+            </div>
+        </form>
+        <?php
+    }
+
 
     /**
      * Maneja la prueba de conexión via AJAX.
@@ -594,6 +704,14 @@ AddType image/webp .webp
         $settings = $this->get_settings();
         $apiBase = rtrim($settings['api_base'], '/');
         $token = $settings['api_token'];
+        
+        // Validar que haya token
+        if (empty($token) || $token === '{{API_TOKEN}}') {
+            wp_send_json_error([
+                'message' => __('No se ha configurado un token válido.', 'webp-converter-bridge'),
+                'details' => 'Por favor ingresa un token de API válido.'
+            ], 400);
+        }
 
         $response = wp_remote_get($apiBase . '?action=health', [
             'headers' => [
@@ -612,26 +730,44 @@ AddType image/webp .webp
         $code = wp_remote_retrieve_response_code($response);
         $body = wp_remote_retrieve_body($response);
         
-        // Si la conexión fue exitosa, extraer y guardar el cost_per_image
-        if ($code === 200) {
+        // Validar código de respuesta
+        if ($code !== 200) {
             $data = json_decode($body, true);
+            $errorMsg = isset($data['error']) ? $data['error'] : 'Error desconocido';
             
-            // Verificar si el API devolvió el costo
-            if (isset($data['client']) && isset($data['client']['cost_per_image'])) {
-                $cost = $data['client']['cost_per_image'];
-                
-                // Actualizar automáticamente las settings
-                $settings['cost_per_image'] = number_format((float)$cost, 2, '.', '');
-                update_option(self::OPTION_NAME, $settings);
-                
-                // Log para debugging
-                error_log('WCB: Cost per image updated to ' . $cost . ' from API');
-            }
+            wp_send_json_error([
+                'message' => sprintf(__('Error de conexión (HTTP %d)', 'webp-converter-bridge'), $code),
+                'details' => $errorMsg
+            ], $code);
+        }
+        
+        // Si la conexión fue exitosa, extraer y guardar el cost_per_image
+        $data = json_decode($body, true);
+        
+        // Verificar que la respuesta sea válida
+        if (!isset($data['success']) || $data['success'] !== true) {
+            wp_send_json_error([
+                'message' => __('Respuesta inválida del servidor.', 'webp-converter-bridge'),
+                'details' => 'El servidor no retornó una respuesta válida.'
+            ], 500);
+        }
+        
+        // Verificar si el API devolvió el costo
+        if (isset($data['client']) && isset($data['client']['cost_per_image'])) {
+            $cost = $data['client']['cost_per_image'];
+            
+            // Actualizar automáticamente las settings
+            $settings['cost_per_image'] = number_format((float)$cost, 2, '.', '');
+            update_option(self::OPTION_NAME, $settings);
+            
+            // Log para debugging
+            error_log('WCB: Cost per image updated to ' . $cost . ' from API');
         }
 
         wp_send_json_success([
-            'message' => sprintf(__('Respuesta %s recibida.', 'webp-converter-bridge'), $code),
-            'body' => $body
+            'message' => __('Conexión exitosa con el servidor WebP.', 'webp-converter-bridge'),
+            'body' => $body,
+            'client_name' => $data['client']['client_name'] ?? 'Desconocido'
         ]);
     }
 
@@ -707,6 +843,216 @@ AddType image/webp .webp
     }
 
     /**
+     * AJAX: Get files for File Manager
+     */
+    public function ajax_get_files(): void
+    {
+        check_ajax_referer('wcb_file_manager', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permiso denegado.'], 403);
+        }
+
+        $type = $_POST['type'] ?? 'webp'; // 'webp' or 'backup'
+        $page = isset($_POST['paged']) ? max(1, intval($_POST['paged'])) : 1;
+        $per_page = 20;
+        $offset = ($page - 1) * $per_page;
+
+        $args = [
+            'post_type'      => 'attachment',
+            'post_status'    => 'inherit',
+            'posts_per_page' => $per_page,
+            'offset'         => $offset,
+            'fields'         => 'ids',
+        ];
+
+        if ($type === 'webp') {
+            $args['post_mime_type'] = 'image/webp';
+        } else {
+            // For backups, we look for attachments that have the backup meta key
+            $args['meta_query'] = [
+                [
+                    'key'     => '_wcb_original_file',
+                    'compare' => 'EXISTS',
+                ]
+            ];
+        }
+
+        $query = new WP_Query($args);
+        $files = [];
+
+        foreach ($query->posts as $id) {
+            $meta = wp_get_attachment_metadata($id);
+            $file_path = get_attached_file($id);
+            $thumb = wp_get_attachment_image_src($id, 'thumbnail');
+            
+            $item = [
+                'id' => $id,
+                'filename' => basename($file_path),
+                'url' => wp_get_attachment_url($id),
+                'thumbnail' => $thumb ? $thumb[0] : '',
+                'size' => size_format(filesize($file_path)),
+                'date' => get_the_date('Y-m-d H:i', $id)
+            ];
+
+            if ($type === 'backup') {
+                $backup_path = get_post_meta($id, '_wcb_original_file', true);
+                $item['backup_exists'] = file_exists($backup_path);
+                $item['backup_size'] = file_exists($backup_path) ? size_format(filesize($backup_path)) : 'N/A';
+            }
+
+            $files[] = $item;
+        }
+
+        wp_send_json_success([
+            'files' => $files,
+            'total' => $query->found_posts,
+            'pages' => $query->max_num_pages,
+            'current_page' => $page
+        ]);
+    }
+
+    /**
+     * AJAX: Restore original file from backup.
+     */
+    public function ajax_restore_backup(): void
+    {
+        check_ajax_referer('wcb_file_manager', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permiso denegado.'], 403);
+        }
+
+        // Prevent timeouts for large files
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(300);
+        }
+        ignore_user_abort(true);
+
+        $id = intval($_POST['id']);
+        $backup_path = get_post_meta($id, '_wcb_original_file', true);
+        $current_path = get_attached_file($id);
+
+        // Fallback: If stored path doesn't exist, check in the same directory as current file
+        if ((!$backup_path || !file_exists($backup_path)) && $current_path) {
+            $potential_backup = dirname($current_path) . '/' . basename($backup_path);
+            if (file_exists($potential_backup)) {
+                $backup_path = $potential_backup;
+                // Update meta to fix it for future
+                update_post_meta($id, '_wcb_original_file', $backup_path);
+            } else {
+                // Try looking for .original of the current filename (if it was renamed)
+                $potential_backup_2 = $current_path . '.original';
+                if (file_exists($potential_backup_2)) {
+                    $backup_path = $potential_backup_2;
+                    update_post_meta($id, '_wcb_original_file', $backup_path);
+                }
+            }
+        }
+
+        if (!$backup_path || !file_exists($backup_path)) {
+            $debug_path = $backup_path ? $backup_path : 'MetaData Empty';
+            wp_send_json_error(['message' => 'No se encontró el archivo de respaldo en: ' . $debug_path]);
+        }
+        
+        // Restore file
+        // We need to restore it to the original filename (e.g. image.jpg).
+        $original_filename = str_replace('.original', '', basename($backup_path));
+        $dir = dirname($current_path);
+        $restore_path = $dir . '/' . $original_filename;
+        
+        if (!copy($backup_path, $restore_path)) {
+             wp_send_json_error(['message' => 'Error al restaurar el archivo (copy).']);
+        }
+        
+        update_attached_file($id, $restore_path);
+        
+        // Restore Mime Type
+        $file_info = wp_check_filetype($restore_path);
+        if ($file_info['type']) {
+            global $wpdb;
+            $wpdb->update(
+                $wpdb->posts,
+                ['post_mime_type' => $file_info['type']],
+                ['ID' => $id],
+                ['%s'],
+                ['%d']
+            );
+            clean_post_cache($id);
+        }
+        
+        // Delete the WebP file if it's different and exists
+        if ($current_path !== $restore_path && file_exists($current_path)) {
+            @unlink($current_path);
+        }
+
+        // Cleanup: Delete the backup file and metadata since it's now restored
+        if (file_exists($backup_path)) {
+            @unlink($backup_path);
+        }
+        delete_post_meta($id, '_wcb_original_file');
+
+        wp_send_json_success(['message' => 'Archivo restaurado correctamente.']);
+    }
+
+    /**
+     * AJAX: Delete backup file.
+     */
+    public function ajax_delete_backup(): void
+    {
+        check_ajax_referer('wcb_file_manager', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permiso denegado.'], 403);
+        }
+
+        $id = intval($_POST['id']);
+        $backup_path = get_post_meta($id, '_wcb_original_file', true);
+        $current_path = get_attached_file($id);
+
+        // Fallback logic (same as restore)
+        if ((!$backup_path || !file_exists($backup_path)) && $current_path) {
+            $potential_backup = dirname($current_path) . '/' . basename($backup_path);
+            if (file_exists($potential_backup)) {
+                $backup_path = $potential_backup;
+            } else {
+                $potential_backup_2 = $current_path . '.original';
+                if (file_exists($potential_backup_2)) {
+                    $backup_path = $potential_backup_2;
+                }
+            }
+        }
+
+        if ($backup_path && file_exists($backup_path)) {
+            unlink($backup_path);
+        }
+
+        delete_post_meta($id, '_wcb_original_file');
+
+        wp_send_json_success(['message' => 'Backup eliminado.']);
+    }
+
+    /**
+     * AJAX: Delete attachment (WebP).
+     */
+    public function ajax_delete_file(): void
+    {
+        check_ajax_referer('wcb_file_manager', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Permiso denegado.'], 403);
+        }
+
+        $id = intval($_POST['id']);
+        
+        // Use WordPress native delete
+        if (wp_delete_attachment($id, true)) {
+            wp_send_json_success(['message' => 'Archivo eliminado.']);
+        } else {
+            wp_send_json_error(['message' => 'Error al eliminar el archivo.'], 500);
+        }
+    }
+    /**
      * AJAX: Scan for all image attachments.
      */
     public function ajax_scan_images(): void
@@ -771,12 +1117,15 @@ AddType image/webp .webp
         
         // 2. Aumentar límites agresivamente
         if (function_exists('ini_set')) {
-            @ini_set('memory_limit', '512M');
-            @ini_set('max_execution_time', '300');
+            @ini_set('memory_limit', '1024M');
+            @ini_set('max_execution_time', '600');
         }
         if (function_exists('set_time_limit')) {
-            @set_time_limit(300);
+            @set_time_limit(600);
         }
+        
+        // Prevent script termination by client disconnect
+        ignore_user_abort(true);
 
         // Register shutdown function
         register_shutdown_function(function() {
@@ -834,12 +1183,22 @@ AddType image/webp .webp
                 $results['failed']++;
                 $results['details'][] = ['id' => $id, 'filename' => $filename, 'status' => 'failed', 'error' => $e->getMessage()];
             }
+            
+            // Force memory cleanup
+            if (function_exists('gc_collect_cycles')) {
+                gc_collect_cycles();
+            }
         }
+
+        $results['metrics'] = [
+            'memory' => size_format(memory_get_usage()),
+            'memory_peak' => size_format(memory_get_peak_usage()),
+            'time' => number_format(microtime(true) - $_SERVER["REQUEST_TIME_FLOAT"], 2) . 's'
+        ];
 
         wp_send_json_success($results);
     }
     
-
 
     /**
      * Escribe un mensaje en el log personalizado del plugin.

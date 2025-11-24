@@ -122,6 +122,25 @@ define('CONVERT_THUMBS_PUBLIC_URL', rtrim(BASE_URL, '/') . '/' . CONVERT_THUMBS_
 
 define('INTEGRATION_DB_PATH', DATABASE_DIR . 'webp_integration.sqlite');
 
+// Configuración de Base de Datos (PostgreSQL)
+define('DB_DRIVER', getenv('DB_DRIVER') ?: 'pgsql'); // sqlite o pgsql
+define('DB_HOST', getenv('DB_HOST') ?: 'postgres');
+define('DB_PORT', getenv('DB_PORT') ?: '5432');
+define('DB_NAME', getenv('DB_NAME') ?: 'webp_integration');
+define('DB_USER', getenv('DB_USER') ?: 'webp_user');
+define('DB_PASS', getenv('DB_PASS') ?: 'webp_password');
+
+define('API_TOKEN_HEADER', 'X-API-Token');
+// Token de API Global (Opcional, para administración)
+// Si se deja null, solo se permitirán tokens de clientes en base de datos
+define('API_TOKEN', getenv('API_TOKEN') ?: null);
+
+// CSRF Protection
+define('CSRF_TOKEN_NAME', 'csrf_token');
+
+// Asset versioning for cache busting
+define('ASSET_VERSION', '2.0.0');
+
 // Configuración de conversión
 define('DEFAULT_QUALITY', 80);
 define('MIN_QUALITY', 0);
@@ -130,20 +149,6 @@ define('ALLOWED_EXTENSIONS', ['jpg', 'jpeg', 'png', 'gif']);
 define('MAX_FILE_SIZE', 50 * 1024 * 1024); // 50MB
 define('MAX_DIMENSION', 10000); // píxeles
 
-// Configuración de seguridad
-define('ENABLE_CSRF', true);
-define('CSRF_TOKEN_NAME', 'csrf_token');
-define('API_TOKEN_HEADER', 'X-API-Token');
-define('API_TOKEN', getenv('API_TOKEN') ?: null); // Opcional para API
-
-// Versión de assets (cache-busting para JS/CSS)
-define('ASSET_VERSION', getenv('ASSET_VERSION') ?: '20251114d');
-
-// Configuración de logging
-define('ENABLE_LOGGING', true);
-define('LOG_LEVEL', 'INFO'); // DEBUG, INFO, WARNING, ERROR
-
-// Configuración de rendimiento
 define('MEMORY_LIMIT', '512M');
 define('MAX_EXECUTION_TIME', 300);
 define('CLEANUP_TEMP_AFTER', 3600); // 1 hora
@@ -169,20 +174,9 @@ foreach ($directories as $dir) {
     }
 }
 
-// Inicializar base de datos de integración (WordPress)
-require_once __DIR__ . '/lib/integration-db.php';
-try {
-    initializeIntegrationDatabase();
-    ensureIntegrationTriggers();
-} catch (RuntimeException $integrationException) {
-    logIntegrationEvent('ERROR', 'Fallo durante la inicialización de la base de integración', [
-        'error' => $integrationException->getMessage()
-    ]);
-}
-
 // Función helper para logging
 function logMessage($level, $message, $context = []) {
-    if (!ENABLE_LOGGING) return;
+    if (!defined('ENABLE_LOGGING') || !ENABLE_LOGGING) return;
     
     $logFile = LOGS_DIR . 'app-' . date('Y-m-d') . '.log';
     $timestamp = date('Y-m-d H:i:s');
@@ -193,7 +187,7 @@ function logMessage($level, $message, $context = []) {
 }
 
 function logIntegrationEvent($level, $message, $context = []) {
-    if (!ENABLE_LOGGING) return;
+    if (!defined('ENABLE_LOGGING') || !ENABLE_LOGGING) return;
 
     $logFile = LOGS_DIR . 'wp-integration-' . date('Y-m-d') . '.log';
     $entry = [
@@ -223,6 +217,18 @@ function jsonError($message, $status = 400, $details = []) {
     ], $status);
 }
 
+// Inicializar base de datos de integración (WordPress)
+require_once __DIR__ . '/lib/integration-db.php';
+require_once __DIR__ . '/lib/wp-media-helper.php';
+try {
+    initializeIntegrationDatabase();
+    ensureIntegrationTriggers();
+} catch (RuntimeException $integrationException) {
+    logIntegrationEvent('ERROR', 'Fallo durante la inicialización de la base de integración', [
+        'error' => $integrationException->getMessage()
+    ]);
+}
+
 // Auto-cleanup de archivos temporales antiguos
 function cleanupOldTempFiles() {
     if (!is_dir(TEMP_DIR)) return;
@@ -244,8 +250,9 @@ if (!IS_CLI && rand(1, 100) === 1) {
     cleanupOldTempFiles();
 }
 
-logMessage('INFO', 'Config loaded', [
-    'environment' => IS_DOCKER ? 'Docker' : 'MAMP',
-    'base_dir' => BASE_DIR
-]);
-
+if (defined('ENABLE_LOGGING') && ENABLE_LOGGING) {
+    logMessage('INFO', 'Config loaded', [
+        'environment' => IS_DOCKER ? 'Docker' : 'MAMP',
+        'base_dir' => BASE_DIR
+    ]);
+}

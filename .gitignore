@@ -1,37 +1,71 @@
-# Archivos de entorno
-.env
-.env.local
+# Gitignore for WebP Converter System
 
-# Carpetas de datos
-/upload/*
-!/upload/.gitkeep
-/convert/*
-!/convert/.gitkeep
-/logs/*
-!/logs/.gitkeep
-/temp/*
-!/temp/.gitkeep
+# Media files (keep structure, exclude images)
+media/uploads/*.jpg
+media/uploads/*.jpeg
+media/uploads/*.png
+media/uploads/*.gif
+media/uploads/*.webp
+media/uploads/**/*.jpg
+media/uploads/**/*.jpeg
+media/uploads/**/*.png
+media/uploads/**/*.gif
+media/uploads/**/*.webp
 
-# Archivos temporales
+media/convert/*.webp
+media/convert/*.jpg
+media/convert/*.jpeg
+media/convert/*.png
+media/convert/thumbs/*.jpg
+media/convert/thumbs/*.jpeg
+media/convert/thumbs/*.png
+media/convert/thumbs/*.webp
+
+# Temporary files
+temp/*
 *.tmp
 *.temp
-*.bak
-*-copia.*
 
-# Sistema operativo
+# Database files (SQLite)
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+error_log
+debug.log
+
+# OS files
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# IDE
+# IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# Logs
-*.log
+# PHP
+vendor/
+composer.phar
 
-# Docker
-.dockerignore
+# WordPress specific
+wp-content/debug.log
+wp-content/uploads/
 
+# Test files
+test-*.php
+test_*.php
+
+# Backups
+*.bak
+*.backup
+*.old
+
+# Environment
+.env
+.env.local
+config.local.php

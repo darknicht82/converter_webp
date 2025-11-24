@@ -1,0 +1,21 @@
+# No copiar al contenedor Docker
+.git
+.gitignore
+*.md
+.env
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+
+# No copiar las imágenes (se montan como volúmenes)
+# upload/*
+# convert/*
+logs/*
+temp/*
+
+# Archivos de desarrollo
+*.bak
+*-copia.*
+index - copia.php
+

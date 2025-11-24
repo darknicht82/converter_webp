@@ -6,7 +6,7 @@
  */
 
 require_once __DIR__ . '/../config.php';
-require_once __DIR__ . '/../includes/integration-db.php';
+require_once __DIR__ . '/../lib/integration-db.php';
 
 // CORS for local development
 header('Access-Control-Allow-Origin: *');
@@ -23,7 +23,7 @@ if (empty($token)) {
 }
 
 // Get client by token
-$integrationClient = getIntegrationClientByToken($token);
+$integrationClient = findIntegrationClientByToken($token);
 
 if (!$integrationClient) {
     http_response_code(401);
@@ -33,7 +33,7 @@ if (!$integrationClient) {
 
 // Get logs for this client
 try {
-    $db = getIntegrationDB();
+    $db = getIntegrationPdo();
     
     $stmt = $db->prepare("
         SELECT 
