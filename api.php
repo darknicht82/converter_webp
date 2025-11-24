@@ -215,6 +215,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
  * Convierte imágenes a WebP
  */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Check if there's an action parameter for special POST actions
+    $postAction = $_GET['action'] ?? null;
+    
+    if ($postAction === 'log_conversion') {
+        // Validate that only clients can log conversions
+        if ($tokenStatus !== 'client') {
+            jsonError('Solo clientes pueden registrar conversiones', 403);
+        }
+
+        // Get JSON body
+        $data = json_decode(file_get_contents('php://input'), true);
+        
+        if (!$data || !isset($data['source_filename'])) {
+            jsonError('Datos inválidos para log_conversion', 400);
+        }
+
+        try {
+            // Log to database
+            $result = logIntegrationConversion(
+                $integrationClient['id'],
+                $data['source_filename'],
+                $data['source_bytes'] ?? 0,
+                $data['converted_bytes'] ?? 0,
+                $integrationClient['cost_per_image'] ?? 0
+            );
+            
+            if ($result) {
+                jsonResponse(['success' => true, 'message' => 'Conversión registrada']);
+            } else {
+                jsonError('Error al registrar conversión', 500);
+            }
+        } catch (Exception $e) {
+            jsonError('Error al registrar conversión: ' . $e->getMessage(), 500);
+        }
+    }
+    
+    // If no special action, proceed with normal image conversion
     $converter = new ImageConverter();
     $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
     $metricsClient = ($tokenStatus === 'client') ? $integrationClient : null;

@@ -44,13 +44,9 @@
 - **Improved**: Stats calculation now includes actual converted bytes and savings
 
 #### API Improvements
-- **Pending**: API routing for `?action=log_conversion` POST requests (needs completion)
-- **Added**: Foundation for conversion logging from WordPress plugin to dashboard
-
-### Known Issues
-- **Critical**: API `log_conversion` endpoint routing needs to be fixed to properly handle POST requests
-- **Impact**: WordPress conversions are not currently being logged to the database
-- **Workaround**: Manual testing shows the `logIntegrationConversion()` function works correctly when called
+- **Fixed**: API routing for `?action=log_conversion` POST requests now works correctly
+- **Added**: Action parameter check before image conversion logic
+- **Verified**: WordPress plugin conversions now log to database successfully
 
 ### File Structure
 ```
